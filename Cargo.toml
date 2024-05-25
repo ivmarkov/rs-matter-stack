@@ -28,13 +28,11 @@ edge-nal = { git = "https://github.com/ivmarkov/edge-net" }
 [dependencies]
 log = { version = "0.4", default-features = false }
 heapless = "0.8"
-enumset = { version = "1", default-features = false }
-strum = { version = "0.26", default-features = false, features = ["derive"] }
 scopeguard = { version = "1", default-features = false }
 embassy-futures = "0.1"
 embassy-sync = "0.5"
-embassy-time = { version = "0.3", features = ["generic-queue"] }
+embassy-time = "0.3"
 embedded-svc = { version = "0.27", default-features = false }
-rs-matter = { version = "0.1", default-features = false, features = ["rustcrypto"] }
+rs-matter = { version = "0.1", default-features = false }
 rs-matter-macros = "0.1"
 edge-nal = "0.2"
