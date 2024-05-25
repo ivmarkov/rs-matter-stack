@@ -25,6 +25,7 @@ use rs_matter::utils::select::Coalesce;
 use rs_matter::CommissioningData;
 
 use crate::error::Error;
+use crate::modem::Modem;
 use crate::netif::Netif;
 use crate::persist::{NetworkContext, Persist};
 use crate::wifi::mgmt::WifiManager;
@@ -32,21 +33,6 @@ use crate::wifi::{comm, WifiContext};
 use crate::{MatterStack, Network};
 
 pub const MAX_WIFI_NETWORKS: usize = 2;
-
-pub trait Modem {
-    type Gatt<'a>: GattPeripheral
-    where
-        Self: 'a;
-    type Wifi<'a>: Wifi
-    where
-        Self: 'a;
-    type Netif<'a>: Netif + UdpBind
-    where
-        Self: 'a;
-
-    fn gatt(&mut self) -> Self::Gatt<'_>;
-    fn wifi_netif(&mut self) -> (Self::Wifi<'_>, Self::Netif<'_>);
-}
 
 /// An implementation of the `Network` trait for a Matter stack running over
 /// BLE during commissioning, and then over WiFi when operating.

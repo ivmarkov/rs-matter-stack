@@ -1,19 +1,5 @@
 use core::fmt;
 use core::net::{Ipv4Addr, Ipv6Addr};
-use core::pin::pin;
-
-use alloc::sync::Arc;
-
-use embassy_futures::select::select;
-use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::mutex::Mutex;
-use embassy_time::{Duration, Timer};
-
-use rs_matter::utils::notification::Notification;
-
-use crate::error::Error;
-
-const TIMEOUT_PERIOD_SECS: u8 = 5;
 
 /// Async trait for accessing the `EspNetif` network interface (netif) of a driver.
 ///
@@ -21,49 +7,11 @@ const TIMEOUT_PERIOD_SECS: u8 = 5;
 /// may be waiting for the network interface to be ready, while the other might
 /// be mutably operating on the L2 driver below the netif, or on the netif itself.
 pub trait Netif {
+    /// Return the active configuration of the network interface, if any
     fn get_conf(&self) -> Option<NetifConf>;
 
+    /// Wait until the network interface configuration changes.
     async fn wait_conf_change(&self);
-
-    // /// Waits until the network interface is available and then
-    // /// calls the provided closure with a reference to the network interface.
-    // async fn with_netif<F, R>(&self, f: F) -> R
-    // where
-    //     F: FnOnce(&EspNetif) -> R;
-
-    // /// Waits until a certain condition `f` becomes `Some` for a network interface
-    // /// and then returns the result.
-    // ///
-    // /// The condition is checked every 5 seconds and every time a new `IpEvent` is
-    // /// generated on the ESP IDF system event loop.
-    // ///
-    // /// The main use case of this method is to wait and listen the netif for changes
-    // /// (netif up/down, IP address changes, etc.)
-    // async fn wait<F, R>(&self, sysloop: EspSystemEventLoop, mut f: F) -> Result<R, Error>
-    // where
-    //     F: FnMut(&EspNetif) -> Result<Option<R>, Error>,
-    // {
-    //     let notification = Arc::new(Notification::<EspRawMutex>::new());
-
-    //     let _subscription = {
-    //         let notification = notification.clone();
-
-    //         sysloop.subscribe::<IpEvent, _>(move |_| {
-    //             notification.notify();
-    //         })
-    //     }?;
-
-    //     loop {
-    //         if let Some(result) = self.with_netif(&mut f).await? {
-    //             break Ok(result);
-    //         }
-
-    //         let mut events = pin!(notification.wait());
-    //         let mut timer = pin!(Timer::after(Duration::from_secs(TIMEOUT_PERIOD_SECS as _)));
-
-    //         select(&mut events, &mut timer).await;
-    //     }
-    // }
 }
 
 impl<T> Netif for &T

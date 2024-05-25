@@ -19,6 +19,7 @@ pub use error::*;
 pub use stack::*;
 
 mod error;
+pub mod modem;
 pub mod netif;
 pub mod persist;
 mod stack;
