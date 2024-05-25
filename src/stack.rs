@@ -17,7 +17,7 @@ use rs_matter::error::ErrorCode;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::transport::network::{NetworkReceive, NetworkSend};
-use rs_matter::utils::buf::{BufferAccess, PooledBuffers};
+use rs_matter::utils::buf::PooledBuffers;
 use rs_matter::utils::epoch::Epoch;
 use rs_matter::utils::rand::Rand;
 use rs_matter::utils::select::Coalesce;
@@ -25,26 +25,15 @@ use rs_matter::utils::signal::Signal;
 use rs_matter::{CommissioningData, Matter, MATTER_PORT};
 
 use crate::error::Error;
-//use crate::multicast::{join_multicast_v4, join_multicast_v6};
 use crate::netif::{Netif, NetifConf};
-// use crate::nvs;
+use crate::persist::{self, Persist};
 use crate::udp;
 
 pub use eth::*;
-// #[cfg(all(
-//     not(esp32h2),
-//     not(esp32s2),
-//     esp_idf_comp_esp_wifi_enabled,
-//     esp_idf_comp_esp_event_enabled,
-//     not(esp_idf_btdm_ctrl_mode_br_edr_only),
-//     esp_idf_bt_enabled,
-//     esp_idf_bt_bluedroid_enabled
-// ))]
-// pub use wifible::*;
+pub use wifible::*;
 
 const MAX_SUBSCRIPTIONS: usize = 3;
 const MAX_IM_BUFFERS: usize = 10;
-const PSM_BUFFER_SIZE: usize = 4096;
 const MAX_RESPONDERS: usize = 4;
 const MAX_BUSY_RESPONDERS: usize = 2;
 
@@ -55,6 +44,12 @@ mod wifible;
 /// `MatterStack` is parameterized by a network type implementing this trait.
 pub trait Network {
     const INIT: Self;
+
+    type Mutex: RawMutex;
+
+    fn network_context(&self) -> persist::NetworkContext<'_, MAX_WIFI_NETWORKS, Self::Mutex> {
+        persist::NetworkContext::Eth
+    }
 }
 
 /// An enum modeling the mDNS service to be used.
@@ -80,7 +75,6 @@ where
 {
     matter: Matter<'a>,
     buffers: PooledBuffers<MAX_IM_BUFFERS, NoopRawMutex, IMBuffer>,
-    psm_buffer: PooledBuffers<1, NoopRawMutex, heapless::Vec<u8, PSM_BUFFER_SIZE>>,
     subscriptions: Subscriptions<MAX_SUBSCRIPTIONS>,
     #[allow(unused)]
     network: N,
@@ -111,7 +105,6 @@ where
                 MATTER_PORT,
             ),
             buffers: PooledBuffers::new(0),
-            psm_buffer: PooledBuffers::new(0),
             subscriptions: Subscriptions::new(),
             network: N::INIT,
             mdns,
@@ -172,17 +165,16 @@ where
     ///
     /// The netif instance is necessary, so that the loop can monitor the network and bring up/down
     /// the main UDP transport and the mDNS service when the netif goes up/down or changes its IP addresses.
-    pub async fn run_with_netif<'d, H, I>(
+    pub async fn run_with_netif<'d, H, P, I>(
         &self,
-        // sysloop: EspSystemEventLoop,
-        // nvs: EspNvsPartition<P>,
+        mut persist: P,
         netif: I,
         dev_comm: Option<(CommissioningData, DiscoveryCapabilities)>,
         handler: H,
     ) -> Result<(), Error>
     where
         H: AsyncHandler + AsyncMetadata,
-        // P: NvsPartitionId,
+        P: Persist,
         I: Netif + UdpBind,
         for<'s> I::Socket<'s>: UdpSplit,
         for<'s> I::Socket<'s>: Multicast,
@@ -237,7 +229,7 @@ where
             let mut main = pin!(self.run_with_transport(
                 udp::Udp(send),
                 udp::Udp(recv),
-                //nvs.clone(),
+                &mut persist,
                 dev_comm.clone(),
                 &handler
             ));
@@ -276,11 +268,11 @@ where
     /// user-provided transport might not be IP-based (i.e. BLE).
     ///
     /// It also has no facilities for monitoring the transport network state.
-    pub async fn run_with_transport<'d, S, R, H>(
+    pub async fn run_with_transport<'d, S, R, P, H>(
         &self,
         send: S,
         recv: R,
-        //nvs: EspNvsPartition<P>,
+        persist: P,
         dev_comm: Option<(CommissioningData, DiscoveryCapabilities)>,
         handler: H,
     ) -> Result<(), Error>
@@ -288,12 +280,12 @@ where
         S: NetworkSend,
         R: NetworkReceive,
         H: AsyncHandler + AsyncMetadata,
-        //P: NvsPartitionId,
+        P: Persist,
     {
         // Reset the Matter transport buffers and all sessions first
         self.matter().reset_transport()?;
 
-        let mut psm = pin!(self.run_psm(/*nvs, nvs::Network::<0, NoopRawMutex>::Eth*/));
+        let mut psm = pin!(self.run_psm(persist));
         let mut respond = pin!(self.run_responder(handler));
         let mut transport = pin!(self.run_transport(send, recv, dev_comm));
 
@@ -304,31 +296,17 @@ where
         Ok(())
     }
 
-    async fn run_psm(
-        &self,
-        //nvs: EspNvsPartition<P>,
-        //network: nvs::Network<'_, W, R>,
-    ) -> Result<(), Error>
-where
-        //P: NvsPartitionId,
-        //R: RawMutex,
+    async fn run_psm<P>(&self, mut persist: P) -> Result<(), Error>
+    where
+        P: Persist,
     {
-        // if false {
-        //     let mut psm_buf = self
-        //         .psm_buffer
-        //         .get()
-        //         .await
-        //         .ok_or(ErrorCode::ResourceExhausted)?;
-        //     psm_buf.resize_default(4096).unwrap();
-
-        //     let nvs = EspNvs::new(nvs, "rs_matter", true)?;
-
-        //     let mut psm = nvs::Psm::new(self.matter(), network, nvs, &mut psm_buf)?;
-
-        //     psm.run().await
-        // } else {
-        core::future::pending().await
-        // }
+        if false {
+            persist
+                .run(self.matter(), self.network().network_context())
+                .await
+        } else {
+            core::future::pending().await
+        }
     }
 
     async fn run_responder<H>(&self, handler: H) -> Result<(), Error>

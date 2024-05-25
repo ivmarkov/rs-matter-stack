@@ -5,7 +5,7 @@ use core::pin::pin;
 use edge_nal::{Multicast, Readable, UdpBind, UdpSplit};
 
 use embassy_futures::select::select;
-use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
+use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use embedded_svc::wifi::asynch::Wifi;
 
@@ -26,11 +26,12 @@ use rs_matter::CommissioningData;
 
 use crate::error::Error;
 use crate::netif::Netif;
+use crate::persist::{NetworkContext, Persist};
 use crate::wifi::mgmt::WifiManager;
 use crate::wifi::{comm, WifiContext};
 use crate::{MatterStack, Network};
 
-const MAX_WIFI_NETWORKS: usize = 2;
+pub const MAX_WIFI_NETWORKS: usize = 2;
 
 pub trait Modem {
     type Gatt<'a>: GattPeripheral
@@ -57,7 +58,7 @@ pub trait Modem {
 /// The BLE implementation used is the ESP IDF Bluedroid stack (not NimBLE).
 pub struct WifiBle<M: RawMutex> {
     btp_context: BtpContext<M>,
-    wifi_context: WifiContext<MAX_WIFI_NETWORKS, NoopRawMutex>,
+    wifi_context: WifiContext<MAX_WIFI_NETWORKS, M>,
 }
 
 impl<M: RawMutex> WifiBle<M> {
@@ -71,6 +72,12 @@ impl<M: RawMutex> WifiBle<M> {
 
 impl<M: RawMutex> Network for WifiBle<M> {
     const INIT: Self = Self::new();
+
+    type Mutex = M;
+
+    fn network_context(&self) -> NetworkContext<'_, { MAX_WIFI_NETWORKS }, Self::Mutex> {
+        NetworkContext::Wifi(&self.wifi_context)
+    }
 }
 
 pub type WifiBleMatterStack<'a, M> = MatterStack<'a, WifiBle<M>>;
@@ -87,7 +94,7 @@ where
 
     /// Return a handler for the root (Endpoint 0) of the Matter Node
     /// configured for BLE+Wifi network.
-    pub fn root_handler(&self) -> WifiBleRootEndpointHandler<'_> {
+    pub fn root_handler(&self) -> WifiBleRootEndpointHandler<'_, M> {
         handler(
             0,
             self.matter(),
@@ -135,17 +142,16 @@ where
     /// It is just a composition of the `MatterStack::run_with_netif` method, and the `WifiManager::run` method,
     /// where the former takes care of running the main Matter loop, while the latter takes care of ensuring
     /// that the Matter instance stays connected to the Wifi network.
-    pub async fn operate<H, I, W>(
+    pub async fn operate<H, P, W, I>(
         &self,
-        // sysloop: EspSystemEventLoop,
-        // timer_service: EspTaskTimerService,
-        // nvs: EspDefaultNvsPartition,
+        persist: P,
         wifi: W,
         netif: I,
         handler: H,
     ) -> Result<(), Error>
     where
         H: AsyncHandler + AsyncMetadata,
+        P: Persist,
         W: Wifi,
         I: Netif + UdpBind,
         for<'s> I::Socket<'s>: UdpSplit,
@@ -156,7 +162,7 @@ where
 
         let mut mgr = WifiManager::new(wifi, &self.network.wifi_context);
 
-        let mut main = pin!(self.run_with_netif(netif, None, handler));
+        let mut main = pin!(self.run_with_netif(persist, netif, None, handler));
         let mut wifi = pin!(mgr.run());
 
         select(&mut wifi, &mut main).coalesce().await
@@ -167,15 +173,16 @@ where
     ///
     /// Note: make sure to call `MatterStack::reset` before calling this method, as all fabrics and ACLs, as well as all
     /// transport state should be reset.
-    pub async fn commission<'d, H, G>(
+    pub async fn commission<'d, H, P, G>(
         &'static self,
-        //nvs: EspDefaultNvsPartition,
+        persist: P,
         gatt: G,
         dev_comm: CommissioningData,
         handler: H,
     ) -> Result<(), Error>
     where
         H: AsyncHandler + AsyncMetadata,
+        P: Persist,
         G: GattPeripheral,
     {
         info!("Running Matter in commissioning mode (BLE)");
@@ -191,7 +198,7 @@ where
         let mut main = pin!(self.run_with_transport(
             &btp,
             &btp,
-            //nvs,
+            persist,
             Some((
                 dev_comm.clone(),
                 DiscoveryCapabilities::new(false, true, false)
@@ -205,19 +212,20 @@ where
     /// An all-in-one "run everything" method that automatically
     /// places the Matter stack either in Commissioning or in Operating mode, depending
     /// on the state of the device as persisted in the NVS storage.
-    pub async fn run<'d, H, P>(
+    pub async fn run<'d, P, E, H>(
         &'static self,
-        //nvs: EspDefaultNvsPartition,
-        mut modem: P,
+        mut persist: P,
+        mut modem: E,
         dev_comm: CommissioningData,
         handler: H,
     ) -> Result<(), Error>
     where
+        P: Persist,
+        E: Modem,
+        for<'n, 's> <E::Netif<'n> as UdpBind>::Socket<'s>: UdpSplit,
+        for<'n, 's> <E::Netif<'n> as UdpBind>::Socket<'s>: Multicast,
+        for<'n, 's, 'r> <<E::Netif<'n> as UdpBind>::Socket<'s> as UdpSplit>::Receive<'r>: Readable,
         H: AsyncHandler + AsyncMetadata,
-        P: Modem,
-        for<'n, 's> <P::Netif<'n> as UdpBind>::Socket<'s>: UdpSplit,
-        for<'n, 's> <P::Netif<'n> as UdpBind>::Socket<'s>: Multicast,
-        for<'n, 's, 'r> <<P::Netif<'n> as UdpBind>::Socket<'s> as UdpSplit>::Receive<'r>: Readable,
     {
         info!("Matter Stack memory: {}B", core::mem::size_of_val(self));
 
@@ -230,7 +238,8 @@ where
 
                 info!("BLE driver initialized");
 
-                let mut main = pin!(self.commission(gatt, dev_comm.clone(), &handler));
+                let mut main =
+                    pin!(self.commission(&mut persist, gatt, dev_comm.clone(), &handler));
                 let mut wait_network_connect =
                     pin!(self.network.wifi_context.wait_network_connect());
 
@@ -248,17 +257,13 @@ where
 
             info!("Wifi driver initialized");
 
-            self.operate(
-                wifi, netif, //nvs.clone(),
-                &handler,
-            )
-            .await?;
+            self.operate(&mut persist, wifi, netif, &handler).await?;
         }
     }
 }
 
-pub type WifiBleRootEndpointHandler<'a> = RootEndpointHandler<
+pub type WifiBleRootEndpointHandler<'a, M> = RootEndpointHandler<
     'a,
-    comm::WifiNwCommCluster<'a, MAX_WIFI_NETWORKS, NoopRawMutex>,
+    comm::WifiNwCommCluster<'a, MAX_WIFI_NETWORKS, M>,
     HandlerCompat<WifiNwDiagCluster>,
 >;

@@ -20,7 +20,7 @@ pub use stack::*;
 
 mod error;
 pub mod netif;
-//pub mod nvs;
+pub mod persist;
 mod stack;
 mod udp;
 pub mod wifi;

@@ -1,6 +1,7 @@
 use core::borrow::Borrow;
 
 use edge_nal::{Multicast, Readable, UdpBind, UdpSplit};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use log::info;
 
 use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Endpoint, HandlerCompat};
@@ -14,7 +15,9 @@ use rs_matter::CommissioningData;
 
 use crate::error::Error;
 use crate::netif::Netif;
+use crate::persist::{NetworkContext, Persist};
 use crate::stack::{MatterStack, Network};
+use crate::MAX_WIFI_NETWORKS;
 
 /// An implementation of the `Network` trait for Ethernet.
 ///
@@ -30,6 +33,12 @@ pub struct Eth(());
 
 impl Network for Eth {
     const INIT: Self = Self(());
+
+    type Mutex = NoopRawMutex;
+
+    fn network_context(&self) -> NetworkContext<'_, { MAX_WIFI_NETWORKS }, Self::Mutex> {
+        NetworkContext::Eth
+    }
 }
 
 pub type EthMatterStack<'a> = MatterStack<'a, Eth>;
@@ -63,17 +72,16 @@ impl<'a> MatterStack<'a, Eth> {
     }
 
     /// Run the Matter stack for Ethernet network.
-    pub async fn run<'d, H, I>(
+    pub async fn run<'d, H, P, I>(
         &self,
-        //sysloop: EspSystemEventLoop,
-        //nvs: EspNvsPartition<P>,
+        persist: P,
         netif: I,
         dev_comm: CommissioningData,
         handler: H,
     ) -> Result<(), Error>
     where
         H: AsyncHandler + AsyncMetadata,
-        //P: NvsPartitionId,
+        P: Persist,
         I: Netif + UdpBind,
         for<'s> I::Socket<'s>: UdpSplit,
         for<'s> I::Socket<'s>: Multicast,
@@ -82,6 +90,7 @@ impl<'a> MatterStack<'a, Eth> {
         info!("Matter Stack memory: {}B", core::mem::size_of_val(self));
 
         self.run_with_netif(
+            persist,
             netif,
             Some((dev_comm, DiscoveryCapabilities::new(true, false, false))),
             handler,
