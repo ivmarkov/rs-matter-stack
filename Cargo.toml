@@ -1,0 +1,40 @@
+[package]
+name = "rs-matter-stack"
+version = "0.1.0"
+authors = ["ivmarkov <ivan.markov@gmail.com>"]
+edition = "2021"
+resolver = "2"
+categories = ["embedded", "hardware-support"]
+keywords = ["matter", "embedded"]
+description = "Utility for configuring and running rs-matter"
+repository = "https://github.com/ivmarkov/rs-matter-stack"
+license = "Proprietary"
+readme = "README.md"
+#documentation = "https://docs.esp-rs.org/rs-matter-stack/"
+rust-version = "1.77"
+
+#[patch.'https://github.com/ivmarkov/async-io-mini']
+#async-io-mini = { path = "../async-io-mini" }
+
+[patch.crates-io]
+embedded-svc = { git = "https://github.com/esp-rs/embedded-svc" }
+rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "wifi" }
+rs-matter-macros = { git = "https://github.com/ivmarkov/rs-matter", branch = "wifi" }
+#rs-matter = { path = "../rs-matter/rs-matter" }
+#rs-matter-macros = { path = "../rs-matter/rs-matter-macros" }
+edge-nal = { git = "https://github.com/ivmarkov/edge-net" }
+#edge-nal = { path = "../edge-net/edge-nal" }
+
+[dependencies]
+log = { version = "0.4", default-features = false }
+heapless = "0.8"
+enumset = { version = "1", default-features = false }
+strum = { version = "0.26", default-features = false, features = ["derive"] }
+scopeguard = { version = "1", default-features = false }
+embassy-futures = "0.1"
+embassy-sync = "0.5"
+embassy-time = { version = "0.3", features = ["generic-queue"] }
+embedded-svc = { version = "0.27", default-features = false }
+rs-matter = { version = "0.1", default-features = false, features = ["rustcrypto"] }
+rs-matter-macros = "0.1"
+edge-nal = "0.2"
