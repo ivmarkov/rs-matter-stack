@@ -18,16 +18,20 @@ Instantiate it and then call `MatterStack::<...>::run(...)`.
 
 ```rust
 //! An example utilizing the `EthMatterStack` struct.
-//! As the name suggests, this Matter stack assembly uses Ethernet as the main transport, as well as for commissioning.
+//! As the name suggests, this Matter stack assembly uses Ethernet as the main transport,
+//! as well as for commissioning.
 //!
 //! Notice that it might be that rather tyhan Ethernet, the actual L2 transport is Wifi.
-//! From the POV of Matter - this case is indistinguishable from Ethernet as long as the Matter
-//! stack is not concerned with connecting to the Wifi network, managing its credentials etc. and can assume it "pre-exists".
+//! From the POV of Matter - this case is indistinguishable from Ethernet as long as the
+//! Matter stack is not concerned with connecting to the Wifi network, managing
+//! its credentials etc. and can assume it "pre-exists".
 //!
 //! The example implements a fictitious Light device (an On-Off Matter cluster).
 //!
-//! Note that there is no real persistence in this example, so the device will always start in commissioning mode.
-//! Note also that the network interface is not monitored for connectivity changes, so the device will always assume it is connected.
+//! Note that there is no real persistence in this example, so the device will always
+//! start in commissioning mode.
+//! Note also that the network interface is not monitored for connectivity changes,
+//! so the device will always assume it is connected.
 
 use core::borrow::Borrow;
 use core::pin::pin;
