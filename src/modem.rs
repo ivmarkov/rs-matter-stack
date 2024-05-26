@@ -8,42 +8,61 @@ use crate::netif::Netif;
 
 /// A trait representing the radio of the device, which can operate either in BLE mode, or in Wifi mode.
 pub trait Modem {
-    type Gatt<'a>: GattPeripheral
+    type BleDevice<'a>: GattPeripheral
     where
         Self: 'a;
-    type Wifi<'a>: Wifi
-    where
-        Self: 'a;
-    type Netif<'a>: Netif + UdpBind
+
+    type WifiDevice<'a>: WifiDevice
     where
         Self: 'a;
 
     /// Setup the radio to operate in BLE mode and return a GATT peripheral configured as per the
     /// requirements of the `rs-matter` BTP implementation. Necessary during commissioning.
-    fn gatt(&mut self) -> Self::Gatt<'_>;
+    async fn ble(&mut self) -> Self::BleDevice<'_>;
 
-    /// Setup the radio to operate in Wifi mode and return:
-    /// - A `Wifi` trait instance, so that the stack can configure and operate the Wifi according to the
-    ///   provisioned networks
-    /// - A `Netif` + `UdpBind` instance, so that the Matter stack can listen to changes in the IP layer
-    ///   running on top of the wifi radio, as well as bind to UDP sockets in this IP layer
-    ///   when running in operational mode
-    fn wifi_netif(&mut self) -> (Self::Wifi<'_>, Self::Netif<'_>);
+    /// Setup the radio to operate in Wifi mode and return a Wifi device that can be further split
+    /// into an "L2" portion controlling the Wifi connection aspects of the network stack, and an
+    /// "L3" portion controlling the IP connection aspects of the network stack.
+    /// Necessary during Matter operational mode.
+    async fn wifi(&mut self) -> Self::WifiDevice<'_>;
 }
 
 impl<T> Modem for &mut T
 where
     T: Modem,
 {
-    type Gatt<'a> = T::Gatt<'a> where Self: 'a;
-    type Wifi<'a> = T::Wifi<'a> where Self: 'a;
-    type Netif<'a> = T::Netif<'a> where Self: 'a;
+    type BleDevice<'a> = T::BleDevice<'a> where Self: 'a;
+    type WifiDevice<'a> = T::WifiDevice<'a> where Self: 'a;
 
-    fn gatt(&mut self) -> Self::Gatt<'_> {
-        T::gatt(*self)
+    async fn ble(&mut self) -> Self::BleDevice<'_> {
+        T::ble(*self).await
     }
 
-    fn wifi_netif(&mut self) -> (Self::Wifi<'_>, Self::Netif<'_>) {
-        T::wifi_netif(*self)
+    async fn wifi(&mut self) -> Self::WifiDevice<'_> {
+        T::wifi(*self).await
+    }
+}
+
+pub trait WifiDevice {
+    type L2<'a>: Wifi
+    where
+        Self: 'a;
+
+    type L3<'a>: Netif + UdpBind
+    where
+        Self: 'a;
+
+    async fn split(&mut self) -> (Self::L2<'_>, Self::L3<'_>);
+}
+
+impl<T> WifiDevice for &mut T
+where
+    T: WifiDevice,
+{
+    type L2<'a> = T::L2<'a> where Self: 'a;
+    type L3<'a> = T::L3<'a> where Self: 'a;
+
+    async fn split(&mut self) -> (Self::L2<'_>, Self::L3<'_>) {
+        T::split(*self).await
     }
 }

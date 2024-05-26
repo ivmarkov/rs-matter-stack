@@ -25,7 +25,7 @@ use rs_matter::utils::select::Coalesce;
 use rs_matter::CommissioningData;
 
 use crate::error::Error;
-use crate::modem::Modem;
+use crate::modem::{Modem, WifiDevice};
 use crate::netif::Netif;
 use crate::persist::Persist;
 use crate::wifi::mgmt::WifiManager;
@@ -217,9 +217,13 @@ where
     where
         P: Persist<WifiBle<M, E>>,
         O: Modem,
-        for<'n, 's> <O::Netif<'n> as UdpBind>::Socket<'s>: UdpSplit,
-        for<'n, 's> <O::Netif<'n> as UdpBind>::Socket<'s>: Multicast,
-        for<'n, 's, 'r> <<O::Netif<'n> as UdpBind>::Socket<'s> as UdpSplit>::Receive<'r>: Readable,
+        for<'w, 'n, 's> <<O::WifiDevice<'w> as WifiDevice>::L3<'n> as UdpBind>::Socket<'s>:
+            UdpSplit,
+        for<'w, 'n, 's> <<O::WifiDevice<'w> as WifiDevice>::L3<'n> as UdpBind>::Socket<'s>:
+            Multicast,
+        for<'w, 'n, 's, 'r> <<<O::WifiDevice<'w> as WifiDevice>::L3<'n> as UdpBind>::Socket<'s> as UdpSplit>::Receive<
+            'r,
+        >: Readable,
         H: AsyncHandler + AsyncMetadata,
     {
         info!("Matter Stack memory: {}B", core::mem::size_of_val(self));
@@ -229,7 +233,7 @@ where
                 // Reset to factory defaults everything, as we'll do commissioning all over
                 self.reset()?;
 
-                let gatt = modem.gatt();
+                let gatt = modem.ble().await;
 
                 info!("BLE driver initialized");
 
@@ -248,7 +252,9 @@ where
             let failsafe: &RefCell<FailSafe> = self.matter().borrow();
             failsafe.borrow_mut().expect_case_rearm()?;
 
-            let (wifi, netif) = modem.wifi_netif();
+            let mut wifi = modem.wifi().await;
+
+            let (wifi, netif) = wifi.split().await;
 
             info!("Wifi driver initialized");
 
