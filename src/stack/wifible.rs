@@ -27,10 +27,10 @@ use rs_matter::CommissioningData;
 use crate::error::Error;
 use crate::modem::Modem;
 use crate::netif::Netif;
-use crate::persist::{NetworkContext, Persist};
+use crate::persist::Persist;
 use crate::wifi::mgmt::WifiManager;
 use crate::wifi::{comm, WifiContext};
-use crate::{MatterStack, Network};
+use crate::{Embedding, MatterStack, Network};
 
 pub const MAX_WIFI_NETWORKS: usize = 2;
 
@@ -42,35 +42,44 @@ pub const MAX_WIFI_NETWORKS: usize = 2;
 /// This is done to save memory and to avoid the usage of the ESP IDF Co-exist driver.
 ///
 /// The BLE implementation used is the ESP IDF Bluedroid stack (not NimBLE).
-pub struct WifiBle<M: RawMutex> {
+pub struct WifiBle<M: RawMutex, E> {
     btp_context: BtpContext<M>,
     wifi_context: WifiContext<MAX_WIFI_NETWORKS, M>,
+    embedding: E,
 }
 
-impl<M: RawMutex> WifiBle<M> {
+impl<M: RawMutex, E> WifiBle<M, E>
+where
+    E: Embedding,
+{
     const fn new() -> Self {
         Self {
             btp_context: BtpContext::new(),
             wifi_context: WifiContext::new(),
+            embedding: E::INIT,
         }
     }
 }
 
-impl<M: RawMutex> Network for WifiBle<M> {
+impl<M: RawMutex, E> Network for WifiBle<M, E>
+where
+    E: Embedding + 'static,
+{
     const INIT: Self = Self::new();
 
-    type Mutex = M;
+    type Embedding = E;
 
-    fn network_context(&self) -> NetworkContext<'_, { MAX_WIFI_NETWORKS }, Self::Mutex> {
-        NetworkContext::Wifi(&self.wifi_context)
+    fn embedding(&self) -> &Self::Embedding {
+        &self.embedding
     }
 }
 
-pub type WifiBleMatterStack<'a, M> = MatterStack<'a, WifiBle<M>>;
+pub type WifiBleMatterStack<'a, M, E> = MatterStack<'a, WifiBle<M, E>>;
 
-impl<'a, M> MatterStack<'a, WifiBle<M>>
+impl<'a, M, E> MatterStack<'a, WifiBle<M, E>>
 where
     M: RawMutex + Send + Sync,
+    E: Embedding + 'static,
 {
     /// Return a metadata for the root (Endpoint 0) of the Matter Node
     /// configured for BLE+Wifi network.
@@ -137,7 +146,7 @@ where
     ) -> Result<(), Error>
     where
         H: AsyncHandler + AsyncMetadata,
-        P: Persist,
+        P: Persist<WifiBle<M, E>>,
         W: Wifi,
         I: Netif + UdpBind,
         for<'s> I::Socket<'s>: UdpSplit,
@@ -168,7 +177,7 @@ where
     ) -> Result<(), Error>
     where
         H: AsyncHandler + AsyncMetadata,
-        P: Persist,
+        P: Persist<WifiBle<M, E>>,
         G: GattPeripheral,
     {
         info!("Running Matter in commissioning mode (BLE)");
@@ -198,19 +207,19 @@ where
     /// An all-in-one "run everything" method that automatically
     /// places the Matter stack either in Commissioning or in Operating mode, depending
     /// on the state of the device as persisted in the NVS storage.
-    pub async fn run<'d, P, E, H>(
+    pub async fn run<'d, P, O, H>(
         &'static self,
         mut persist: P,
-        mut modem: E,
+        mut modem: O,
         dev_comm: CommissioningData,
         handler: H,
     ) -> Result<(), Error>
     where
-        P: Persist,
-        E: Modem,
-        for<'n, 's> <E::Netif<'n> as UdpBind>::Socket<'s>: UdpSplit,
-        for<'n, 's> <E::Netif<'n> as UdpBind>::Socket<'s>: Multicast,
-        for<'n, 's, 'r> <<E::Netif<'n> as UdpBind>::Socket<'s> as UdpSplit>::Receive<'r>: Readable,
+        P: Persist<WifiBle<M, E>>,
+        O: Modem,
+        for<'n, 's> <O::Netif<'n> as UdpBind>::Socket<'s>: UdpSplit,
+        for<'n, 's> <O::Netif<'n> as UdpBind>::Socket<'s>: Multicast,
+        for<'n, 's, 'r> <<O::Netif<'n> as UdpBind>::Socket<'s> as UdpSplit>::Receive<'r>: Readable,
         H: AsyncHandler + AsyncMetadata,
     {
         info!("Matter Stack memory: {}B", core::mem::size_of_val(self));

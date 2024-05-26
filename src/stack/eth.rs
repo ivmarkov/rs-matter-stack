@@ -1,7 +1,7 @@
 use core::borrow::Borrow;
 
 use edge_nal::{Multicast, Readable, UdpBind, UdpSplit};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
 use log::info;
 
 use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Endpoint, HandlerCompat};
@@ -15,9 +15,9 @@ use rs_matter::CommissioningData;
 
 use crate::error::Error;
 use crate::netif::Netif;
-use crate::persist::{NetworkContext, Persist};
+use crate::persist::Persist;
 use crate::stack::{MatterStack, Network};
-use crate::MAX_WIFI_NETWORKS;
+use crate::Embedding;
 
 /// An implementation of the `Network` trait for Ethernet.
 ///
@@ -29,22 +29,28 @@ use crate::MAX_WIFI_NETWORKS;
 ///
 /// The expectation is nevertheless that for production use-cases
 /// the `Eth` network would really only be used for Ethernet.
-pub struct Eth(());
+pub struct Eth<E>(E);
 
-impl Network for Eth {
-    const INIT: Self = Self(());
+impl<E> Network for Eth<E>
+where
+    E: Embedding + 'static,
+{
+    const INIT: Self = Self(E::INIT);
 
-    type Mutex = NoopRawMutex;
+    type Embedding = E;
 
-    fn network_context(&self) -> NetworkContext<'_, { MAX_WIFI_NETWORKS }, Self::Mutex> {
-        NetworkContext::Eth
+    fn embedding(&self) -> &Self::Embedding {
+        &self.0
     }
 }
 
-pub type EthMatterStack<'a> = MatterStack<'a, Eth>;
+pub type EthMatterStack<'a, E> = MatterStack<'a, Eth<E>>;
 
 /// A specialization of the `MatterStack` for Ethernet.
-impl<'a> MatterStack<'a, Eth> {
+impl<'a, E> MatterStack<'a, Eth<E>>
+where
+    E: Embedding + 'static,
+{
     /// Return a metadata for the root (Endpoint 0) of the Matter Node
     /// configured for Ethernet network.
     pub const fn root_metadata() -> Endpoint<'static> {
@@ -81,7 +87,7 @@ impl<'a> MatterStack<'a, Eth> {
     ) -> Result<(), Error>
     where
         H: AsyncHandler + AsyncMetadata,
-        P: Persist,
+        P: Persist<Eth<E>> + 'static,
         I: Netif + UdpBind,
         for<'s> I::Socket<'s>: UdpSplit,
         for<'s> I::Socket<'s>: Multicast,

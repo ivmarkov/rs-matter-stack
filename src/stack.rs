@@ -4,7 +4,7 @@ use core::pin::pin;
 
 use edge_nal::{Multicast, Readable, UdpBind, UdpSplit};
 use embassy_futures::select::select3;
-use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use log::info;
 
@@ -26,7 +26,7 @@ use rs_matter::{CommissioningData, Matter, MATTER_PORT};
 
 use crate::error::Error;
 use crate::netif::{Netif, NetifConf};
-use crate::persist::{self, Persist};
+use crate::persist::Persist;
 use crate::udp;
 
 pub use eth::*;
@@ -40,16 +40,19 @@ const MAX_BUSY_RESPONDERS: usize = 2;
 mod eth;
 mod wifible;
 
+/// User data that can be embedded in the stack network
+pub trait Embedding {
+    const INIT: Self;
+}
+
 /// A trait modeling a specific network type.
 /// `MatterStack` is parameterized by a network type implementing this trait.
 pub trait Network {
     const INIT: Self;
 
-    type Mutex: RawMutex;
+    type Embedding: Embedding + 'static;
 
-    fn network_context(&self) -> persist::NetworkContext<'_, MAX_WIFI_NETWORKS, Self::Mutex> {
-        persist::NetworkContext::Eth
-    }
+    fn embedding(&self) -> &Self::Embedding;
 }
 
 /// An enum modeling the mDNS service to be used.
@@ -174,7 +177,7 @@ where
     ) -> Result<(), Error>
     where
         H: AsyncHandler + AsyncMetadata,
-        P: Persist,
+        P: Persist<N>,
         I: Netif + UdpBind,
         for<'s> I::Socket<'s>: UdpSplit,
         for<'s> I::Socket<'s>: Multicast,
@@ -280,7 +283,7 @@ where
         S: NetworkSend,
         R: NetworkReceive,
         H: AsyncHandler + AsyncMetadata,
-        P: Persist,
+        P: Persist<N>,
     {
         // Reset the Matter transport buffers and all sessions first
         self.matter().reset_transport()?;
@@ -298,12 +301,10 @@ where
 
     async fn run_psm<P>(&self, mut persist: P) -> Result<(), Error>
     where
-        P: Persist,
+        P: Persist<N>,
     {
         if false {
-            persist
-                .run(self.matter(), self.network().network_context())
-                .await
+            persist.run(self.network(), self.matter()).await
         } else {
             core::future::pending().await
         }
