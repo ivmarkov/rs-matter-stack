@@ -6,11 +6,11 @@
 #![allow(clippy::declare_interior_mutable_const)]
 #![warn(clippy::large_futures)]
 
-use core::fmt::Write as _;
-use core::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6};
+use core::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 use core::pin::pin;
 
-use edge_nal::{Multicast, UdpBind, UdpSplit};
+use edge_nal::{UdpBind, UdpSplit};
+
 use embassy_futures::select::select3;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
@@ -22,6 +22,7 @@ use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata};
 use rs_matter::data_model::sdm::dev_att::DevAttDataFetcher;
 use rs_matter::data_model::subscriptions::Subscriptions;
 use rs_matter::error::ErrorCode;
+use rs_matter::mdns::{Mdns, MdnsService};
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::transport::network::{NetworkReceive, NetworkSend};
@@ -65,16 +66,31 @@ const MAX_RESPONDERS: usize = 4;
 const MAX_BUSY_RESPONDERS: usize = 2;
 
 /// An enum modeling the mDNS service to be used.
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-pub enum MdnsType {
+#[derive(Copy, Clone, Default)]
+pub enum MdnsType<'a> {
     /// The mDNS service provided by the `rs-matter` crate.
     #[default]
     Builtin,
+    /// User-provided mDNS service.
+    Provided(&'a dyn Mdns),
 }
 
-impl MdnsType {
+impl<'a> MdnsType<'a> {
     pub const fn default() -> Self {
         Self::Builtin
+    }
+
+    pub const fn mdns_service(&self) -> MdnsService<'a> {
+        match self {
+            MdnsType::Builtin => MdnsService::Builtin,
+            MdnsType::Provided(mdns) => MdnsService::Provided(*mdns),
+        }
+    }
+}
+
+impl<'a> From<MdnsType<'a>> for MdnsService<'a> {
+    fn from(value: MdnsType<'a>) -> Self {
+        value.mdns_service()
     }
 }
 
@@ -91,7 +107,7 @@ where
     #[allow(unused)]
     network: N,
     #[allow(unused)]
-    mdns: MdnsType,
+    mdns: MdnsType<'a>,
     ip_info: Signal<NoopRawMutex, Option<NetifConf>>,
 }
 
@@ -104,16 +120,15 @@ where
     pub const fn new_default(
         dev_det: &'a BasicInfoConfig,
         dev_att: &'a dyn DevAttDataFetcher,
-        mdns: MdnsType,
     ) -> Self {
-        Self::new(dev_det, dev_att, mdns, sys_epoch, sys_rand)
+        Self::new(dev_det, dev_att, MdnsType::default(), sys_epoch, sys_rand)
     }
 
     /// Create a new `MatterStack` instance.
     pub const fn new(
         dev_det: &'a BasicInfoConfig,
         dev_att: &'a dyn DevAttDataFetcher,
-        mdns: MdnsType,
+        mdns: MdnsType<'a>,
         epoch: Epoch,
         rand: Rand,
     ) -> Self {
@@ -121,7 +136,7 @@ where
             matter: Matter::new(
                 dev_det,
                 dev_att,
-                rs_matter::mdns::MdnsService::Builtin,
+                mdns.mdns_service(),
                 epoch,
                 rand,
                 MATTER_PORT,
@@ -348,61 +363,83 @@ where
         Ok(())
     }
 
-    async fn run_builtin_mdns<I>(&self, netif: &I, netif_conf: &NetifConf) -> Result<(), Error>
+    async fn run_builtin_mdns<I>(&self, _netif: &I, _netif_conf: &NetifConf) -> Result<(), Error>
     where
         I: UdpBind,
     {
-        use rs_matter::mdns::{
-            Host, MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_PORT,
-        };
+        if matches!(self.mdns, MdnsType::Builtin) {
+            #[cfg(not(all(
+                feature = "std",
+                any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))
+            )))]
+            {
+                use core::fmt::Write as _;
 
-        let mut socket = netif
-            .bind(SocketAddr::V6(SocketAddrV6::new(
-                Ipv6Addr::UNSPECIFIED,
-                MDNS_PORT,
-                0,
-                netif_conf.interface,
-            )))
-            .await
-            .map_err(|_| ErrorCode::StdIoError)?;
+                use core::net::IpAddr;
 
-        socket
-            .join(IpAddr::V4(MDNS_IPV4_BROADCAST_ADDR))
-            .await
-            .map_err(|_| ErrorCode::StdIoError)?; // TODO: netif_conf.ipv4
-        socket
-            .join(IpAddr::V6(MDNS_IPV6_BROADCAST_ADDR))
-            .await
-            .map_err(|_| ErrorCode::StdIoError)?; // TODO: netif_conf.interface
+                use edge_nal::Multicast;
 
-        let (recv, send) = socket.split();
+                use rs_matter::mdns::{
+                    Host, MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_PORT,
+                };
 
-        let mut hostname = heapless::String::<12>::new();
-        write!(
-            hostname,
-            "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
-            netif_conf.mac[0],
-            netif_conf.mac[1],
-            netif_conf.mac[2],
-            netif_conf.mac[3],
-            netif_conf.mac[4],
-            netif_conf.mac[5]
-        )
-        .unwrap();
+                let mut socket = _netif
+                    .bind(SocketAddr::V6(SocketAddrV6::new(
+                        Ipv6Addr::UNSPECIFIED,
+                        MDNS_PORT,
+                        0,
+                        _netif_conf.interface,
+                    )))
+                    .await
+                    .map_err(|_| ErrorCode::StdIoError)?;
 
-        self.matter()
-            .run_builtin_mdns(
-                udp::Udp(send),
-                udp::Udp(recv),
-                &Host {
-                    id: 0,
-                    hostname: &hostname,
-                    ip: netif_conf.ipv4.octets(),
-                    ipv6: Some(netif_conf.ipv6.octets()),
-                },
-                Some(netif_conf.interface),
-            )
-            .await?;
+                socket
+                    .join(IpAddr::V4(MDNS_IPV4_BROADCAST_ADDR))
+                    .await
+                    .map_err(|_| ErrorCode::StdIoError)?; // TODO: netif_conf.ipv4
+                socket
+                    .join(IpAddr::V6(MDNS_IPV6_BROADCAST_ADDR))
+                    .await
+                    .map_err(|_| ErrorCode::StdIoError)?; // TODO: netif_conf.interface
+
+                let (recv, send) = socket.split();
+
+                let mut hostname = heapless::String::<12>::new();
+                write!(
+                    hostname,
+                    "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+                    _netif_conf.mac[0],
+                    _netif_conf.mac[1],
+                    _netif_conf.mac[2],
+                    _netif_conf.mac[3],
+                    _netif_conf.mac[4],
+                    _netif_conf.mac[5]
+                )
+                .unwrap();
+
+                self.matter()
+                    .run_builtin_mdns(
+                        udp::Udp(send),
+                        udp::Udp(recv),
+                        &Host {
+                            id: 0,
+                            hostname: &hostname,
+                            ip: _netif_conf.ipv4.octets(),
+                            ipv6: Some(_netif_conf.ipv6.octets()),
+                        },
+                        Some(_netif_conf.interface),
+                    )
+                    .await?;
+            }
+
+            #[cfg(all(
+                feature = "std",
+                any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))
+            ))]
+            core::future::pending::<()>().await;
+        } else {
+            core::future::pending::<()>().await;
+        }
 
         Ok(())
     }

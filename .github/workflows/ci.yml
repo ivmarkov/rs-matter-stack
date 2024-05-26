@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: "50 6 * * *"
+  workflow_dispatch:
+
+env:
+  RUST_TOOLCHAIN: stable
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features: ['', 'std', 'os', 'zeroconf', 'async-io-mini']
+
+    steps:
+      - name: Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy, rust-src
+
+      - name: Install libdbus
+        run: sudo apt-get install -y libdbus-1-dev
+
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Fmt
+        run: cargo fmt -- --check
+
+      - name: Clippy
+        run: cargo clippy --no-deps --no-default-features --features ${{matrix.features}} -- -Dwarnings
+
+      - name: Build
+        run: cargo build --no-default-features --features ${{matrix.features}}
+
+      - name: Examples
+        if: matrix.features == 'os'
+        run: cargo build --examples --features ${{matrix.features}}

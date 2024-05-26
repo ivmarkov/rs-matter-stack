@@ -29,7 +29,7 @@ use rs_matter::CommissioningData;
 
 use rs_matter_stack::netif::DummyNetif;
 use rs_matter_stack::persist::DummyPersist;
-use rs_matter_stack::{Error, EthMatterStack, MdnsType};
+use rs_matter_stack::{Error, EthMatterStack};
 
 use static_cell::ConstStaticCell;
 
@@ -123,7 +123,6 @@ static MATTER_STACK: ConstStaticCell<EthMatterStack<()>> =
             vendor_name: "ACME",
         },
         &dev_att::HardCodedDevAtt::new(),
-        MdnsType::default(),
     ));
 
 /// Endpoint 0 (the root endpoint) always runs

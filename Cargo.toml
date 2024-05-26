@@ -29,8 +29,9 @@ edge-nal-std = { git = "https://github.com/ivmarkov/edge-net" }
 
 [features]
 default = ["os"]
-async-io-mini = ["edge-nal-std/async-io-mini"]
+zeroconf = ["os"]
 os = ["std", "rs-matter/os", "embassy-time/std", "embassy-time/generic-queue"]
+async-io-mini = ["std", "edge-nal-std/async-io-mini"]
 std = ["rs-matter/std", "edge-nal-std/async-io"]
 
 [dependencies]
@@ -44,7 +45,7 @@ embedded-svc = { version = "0.27", default-features = false }
 rs-matter = { version = "0.1", default-features = false }
 rs-matter-macros = "0.1"
 edge-nal = "0.2"
-edge-nal-std = { version = "0.2", default-features = false, optional = true }
+edge-nal-std = { version = "0.2", optional = true }
 
 [dev-dependencies]
 static_cell = "2.1"
