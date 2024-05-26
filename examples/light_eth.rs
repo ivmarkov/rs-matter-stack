@@ -2,7 +2,7 @@
 //! As the name suggests, this Matter stack assembly uses Ethernet as the main transport,
 //! as well as for commissioning.
 //!
-//! Notice that it might be that rather tyhan Ethernet, the actual L2 transport is Wifi.
+//! Notice that it might be that rather than Ethernet, the actual L2 transport is Wifi.
 //! From the POV of Matter - this case is indistinguishable from Ethernet as long as the
 //! Matter stack is not concerned with connecting to the Wifi network, managing
 //! its credentials etc. and can assume it "pre-exists".
