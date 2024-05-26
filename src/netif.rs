@@ -1,5 +1,5 @@
 use core::fmt;
-use core::net::{Ipv4Addr, Ipv6Addr};
+use core::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 
 /// Async trait for accessing the `EspNetif` network interface (netif) of a driver.
 ///
@@ -68,5 +68,69 @@ impl fmt::Display for NetifConf {
             self.mac[4],
             self.mac[5]
         )
+    }
+}
+
+/// This is a `Netif` implementation that does not really track any changes of an underlying network interface,
+/// and therefore assumes the network interface is always up.
+///
+/// Furthermore, it always reports fixed IPs and interface ID
+/// (by default `Ipv4Addr::UNSPECIFIED` / `Ipv6Addr::UNSPECIFIED` and 0).
+///
+/// Useful for demoing purposes
+pub struct DummyNetif {
+    ipv4: Ipv4Addr,
+    ipv6: Ipv6Addr,
+    interface: u32,
+    mac: [u8; 6],
+}
+
+impl DummyNetif {
+    /// Create a new `DummyNetif` with the given IP configuration and MAC address
+    pub const fn new(ipv4: Ipv4Addr, ipv6: Ipv6Addr, interface: u32, mac: [u8; 6]) -> Self {
+        Self {
+            ipv4,
+            ipv6,
+            interface,
+            mac,
+        }
+    }
+}
+
+impl Default for DummyNetif {
+    fn default() -> Self {
+        Self {
+            ipv4: Ipv4Addr::UNSPECIFIED,
+            ipv6: Ipv6Addr::UNSPECIFIED,
+            interface: 0,
+            mac: [1, 2, 3, 4, 5, 6],
+        }
+    }
+}
+
+impl Netif for DummyNetif {
+    fn get_conf(&self) -> Option<NetifConf> {
+        Some(NetifConf {
+            ipv4: self.ipv4,
+            ipv6: self.ipv6,
+            interface: self.interface,
+            mac: self.mac,
+        })
+    }
+
+    async fn wait_conf_change(&self) {
+        // DummyNetif does not track any changes
+        core::future::pending().await
+    }
+}
+
+#[cfg(feature = "std")]
+impl edge_nal::UdpBind for DummyNetif {
+    type Error = std::io::Error;
+
+    type Socket<'a> = edge_nal_std::UdpSocket;
+
+    async fn bind(&self, addr: SocketAddr) -> Result<Self::Socket<'_>, Self::Error> {
+        edge_nal_std::Stack::new().bind(addr).await
     }
 }

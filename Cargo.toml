@@ -24,6 +24,14 @@ rs-matter-macros = { git = "https://github.com/ivmarkov/rs-matter", branch = "wi
 #rs-matter-macros = { path = "../rs-matter/rs-matter-macros" }
 edge-nal = { git = "https://github.com/ivmarkov/edge-net" }
 #edge-nal = { path = "../edge-net/edge-nal" }
+edge-nal-std = { git = "https://github.com/ivmarkov/edge-net" }
+#edge-nal-std = { path = "../edge-net/edge-nal" }
+
+[features]
+default = ["os"]
+async-io-mini = ["edge-nal-std/async-io-mini"]
+os = ["std", "rs-matter/os", "embassy-time/std", "embassy-time/generic-queue"]
+std = ["rs-matter/std", "edge-nal-std/async-io"]
 
 [dependencies]
 log = { version = "0.4", default-features = false }
@@ -36,3 +44,13 @@ embedded-svc = { version = "0.27", default-features = false }
 rs-matter = { version = "0.1", default-features = false }
 rs-matter-macros = "0.1"
 edge-nal = "0.2"
+edge-nal-std = { version = "0.2", default-features = false, optional = true }
+
+[dev-dependencies]
+static_cell = "2.1"
+futures-lite = "1"
+
+[[example]]
+name = "light_eth"
+path = "examples/light_eth.rs"
+required-features = ["os"]

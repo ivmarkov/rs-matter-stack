@@ -24,3 +24,35 @@ where
         T::run(self, network, matter).await
     }
 }
+
+/// As the name suggests, this is a dummy implementation of the `Persist` trait
+/// that does not persist anything.
+pub struct DummyPersist;
+
+impl<N> Persist<N> for DummyPersist {
+    async fn reset(&mut self, _: &N, _: &Matter<'_>) -> Result<(), Error> {
+        Ok(())
+    }
+
+    async fn run(&mut self, _: &N, _: &Matter<'_>) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+impl Default for DummyPersist {
+    fn default() -> Self {
+        Self
+    }
+}
+
+// #[cfg(feature = "std")]
+// pub struct FilePersist<'a>(rs_matter::persist::Psm<'a>);
+
+// #[cfg(feature = "std")]
+// impl<'a> FilePersist<'a> {
+//     pub fn new(matter: &'a Matter<'a>, dir: std::path::PathBuf) -> Result<Self, Error> {
+//         Ok(Self(rs_matter::persist::Psm::new(matter, dir)?))
+//     }
+// }
+
+// impl

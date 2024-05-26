@@ -2,7 +2,7 @@ use core::borrow::Borrow;
 use core::cell::RefCell;
 use core::pin::pin;
 
-use edge_nal::{Multicast, Readable, UdpBind, UdpSplit};
+use edge_nal::UdpBind;
 
 use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::RawMutex;
@@ -27,10 +27,11 @@ use rs_matter::CommissioningData;
 use crate::error::Error;
 use crate::modem::{Modem, WifiDevice};
 use crate::netif::Netif;
+use crate::network::{Embedding, Network};
 use crate::persist::Persist;
 use crate::wifi::mgmt::WifiManager;
 use crate::wifi::{comm, WifiContext};
-use crate::{Embedding, MatterStack, Network};
+use crate::MatterStack;
 
 pub const MAX_WIFI_NETWORKS: usize = 2;
 
@@ -42,7 +43,7 @@ pub const MAX_WIFI_NETWORKS: usize = 2;
 /// This is done to save memory and to avoid the usage of the ESP IDF Co-exist driver.
 ///
 /// The BLE implementation used is the ESP IDF Bluedroid stack (not NimBLE).
-pub struct WifiBle<M: RawMutex, E> {
+pub struct WifiBle<M: RawMutex, E = ()> {
     btp_context: BtpContext<M>,
     wifi_context: WifiContext<MAX_WIFI_NETWORKS, M>,
     embedding: E,
@@ -149,9 +150,6 @@ where
         P: Persist<WifiBle<M, E>>,
         W: Wifi,
         I: Netif + UdpBind,
-        for<'s> I::Socket<'s>: UdpSplit,
-        for<'s> I::Socket<'s>: Multicast,
-        for<'s, 'r> <I::Socket<'s> as UdpSplit>::Receive<'r>: Readable,
     {
         info!("Running Matter in operating mode (Wifi)");
 
@@ -217,13 +215,6 @@ where
     where
         P: Persist<WifiBle<M, E>>,
         O: Modem,
-        for<'w, 'n, 's> <<O::WifiDevice<'w> as WifiDevice>::L3<'n> as UdpBind>::Socket<'s>:
-            UdpSplit,
-        for<'w, 'n, 's> <<O::WifiDevice<'w> as WifiDevice>::L3<'n> as UdpBind>::Socket<'s>:
-            Multicast,
-        for<'w, 'n, 's, 'r> <<<O::WifiDevice<'w> as WifiDevice>::L3<'n> as UdpBind>::Socket<'s> as UdpSplit>::Receive<
-            'r,
-        >: Readable,
         H: AsyncHandler + AsyncMetadata,
     {
         info!("Matter Stack memory: {}B", core::mem::size_of_val(self));

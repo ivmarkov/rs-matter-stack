@@ -1,6 +1,6 @@
 use core::borrow::Borrow;
 
-use edge_nal::{Multicast, Readable, UdpBind, UdpSplit};
+use edge_nal::UdpBind;
 
 use log::info;
 
@@ -15,9 +15,9 @@ use rs_matter::CommissioningData;
 
 use crate::error::Error;
 use crate::netif::Netif;
+use crate::network::{Embedding, Network};
 use crate::persist::Persist;
-use crate::stack::{MatterStack, Network};
-use crate::Embedding;
+use crate::MatterStack;
 
 /// An implementation of the `Network` trait for Ethernet.
 ///
@@ -29,7 +29,7 @@ use crate::Embedding;
 ///
 /// The expectation is nevertheless that for production use-cases
 /// the `Eth` network would really only be used for Ethernet.
-pub struct Eth<E>(E);
+pub struct Eth<E = ()>(E);
 
 impl<E> Network for Eth<E>
 where
@@ -89,9 +89,6 @@ where
         H: AsyncHandler + AsyncMetadata,
         P: Persist<Eth<E>> + 'static,
         I: Netif + UdpBind,
-        for<'s> I::Socket<'s>: UdpSplit,
-        for<'s> I::Socket<'s>: Multicast,
-        for<'s, 'r> <I::Socket<'s> as UdpSplit>::Receive<'r>: Readable,
     {
         info!("Matter Stack memory: {}B", core::mem::size_of_val(self));
 
