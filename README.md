@@ -16,6 +16,29 @@ Furthermore, _operating_ the assembled Matter stack is also challenging, as vari
 
 Instantiate it and then call `MatterStack::<...>::run(...)`.
 
+## OK, but what would I sacrifice?
+
+Flexibility.
+
+Using `MatterStack<...>` hard-codes the following:
+* _One large future_: The Matter stack is assembled as one large future which is not `Send`. Using an executor to poll that future together with others is still possible, but the executor should be a local one (i.e. Tokio's `LocalSet`, `async_executor::LocalExecutor` and so on).
+* _Allocation strategy_: a number of large-ish buffers are const-allocated inside the `MatterStack` struct. This allows the whole stack to be statically-allocated with `StaticConstCell` - yet - that would eat up 20 to 60K of your flash size, depending on the selected number of maximum number of subscriptions, exchange buffers and so on. A different allocation strategy might be provided in future.
+
+## The example is STD-only, uses `DummyNetif` and `DummyPersist`, and does not speak Wifi and BLE?
+
+The core of `rs-matter-stack` is `no_std` and no-`alloc`.
+
+For production use-cases you still need to provide implementations of the following platform-specific traits:
+- `Persist` - non-volatile storage abstraction. For STD, `rs-matter-stack` provides `KvPersist` + `DirKvStore`. Easiest is to implement `KvBlobStore`, the stack will take care of the rest.
+- `Netif` - network interface abstraction (i.e. monitoring when the network interface is up or down, and what is its IP configuration). For IP IO, the stack uses the [`edge-nal`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal) crate, and is thus compatible with [`STD`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal-std) and [`Embassy`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal-embassy).
+- `Modem` (for BLE &Wifi only) - abstraction of the device radio, that can operate either in Wifi, or in BLE mode.
+
+## ESP-IDF
+
+The [`esp-idf-matter`](https://github.com/ivmarkov/esp-idf-matter) crate provides implementations for `Persist`, `Netif` and `Modem` for the ESP-IDF SDK.
+
+## Example
+
 ```rust
 //! An example utilizing the `EthMatterStack` struct.
 //! As the name suggests, this Matter stack assembly uses Ethernet as the main transport,
@@ -46,13 +69,14 @@ use rs_matter::data_model::cluster_on_off;
 use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::data_model::objects::{Endpoint, HandlerCompat, Node};
 use rs_matter::data_model::system_model::descriptor;
+use rs_matter::error::Error;
 use rs_matter::secure_channel::spake2p::VerifierData;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::CommissioningData;
 
 use rs_matter_stack::netif::DummyNetif;
 use rs_matter_stack::persist::DummyPersist;
-use rs_matter_stack::{Error, EthMatterStack};
+use rs_matter_stack::EthMatterStack;
 
 use static_cell::ConstStaticCell;
 
@@ -93,7 +117,7 @@ fn main() -> Result<(), Error> {
     // not being very intelligent w.r.t. stack usage in async functions
     let mut matter = pin!(stack.run(
         // Will not persist anything
-        DummyPersist::default(),
+        DummyPersist,
         // Will use the default network interface and will assume it is always up
         DummyNetif::default(),
         // Hard-coded for demo purposes
