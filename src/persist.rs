@@ -337,15 +337,15 @@ impl DirKvBlobStore {
 #[cfg(feature = "std")]
 impl KvBlobStore for DirKvBlobStore {
     async fn load<'a>(&mut self, key: &str, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
-        DirKvStore::load(self, key, buf)
+        DirKvBlobStore::load(self, key, buf)
     }
 
     async fn store(&mut self, key: &str, value: &[u8]) -> Result<(), Error> {
-        DirKvStore::store(self, key, value)
+        DirKvBlobStore::store(self, key, value)
     }
 
     async fn remove(&mut self, key: &str) -> Result<(), Error> {
-        DirKvStore::remove(self, key)
+        DirKvBlobStore::remove(self, key)
     }
 }
 
