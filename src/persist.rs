@@ -253,10 +253,10 @@ where
 
 /// An implementation of the `KvBlobStore` trait that stores the BLOBs in a directory.
 #[cfg(feature = "std")]
-pub struct DirKvStore(std::path::PathBuf);
+pub struct DirKvBlobStore(std::path::PathBuf);
 
 #[cfg(feature = "std")]
-impl DirKvStore {
+impl DirKvBlobStore {
     /// Create a new `DirKvStore` instance.
     pub const fn new(path: std::path::PathBuf) -> Self {
         Self(path)
@@ -335,7 +335,7 @@ impl DirKvStore {
 }
 
 #[cfg(feature = "std")]
-impl KvBlobStore for DirKvStore {
+impl KvBlobStore for DirKvBlobStore {
     async fn load<'a>(&mut self, key: &str, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
         DirKvStore::load(self, key, buf)
     }

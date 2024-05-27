@@ -27,7 +27,7 @@ Using `MatterStack<...>` hard-codes the following:
 The core of `rs-matter-stack` is `no_std` and no-`alloc`.
 
 For production use-cases you need to provide implementations of the following platform-specific traits:
-- `Persist` - non-volatile storage abstraction. For STD, `rs-matter-stack` provides `KvPersist` + `DirKvStore`. Easiest is to implement `KvBlobStore`, the stack will take care of the rest.
+- `Persist` - non-volatile storage abstraction. Easiest is to implement `KvBlobStore`, and then use it with the provided `KvPersist` utility. For STD, `rs-matter-stack` provides `DirKvBlobStore`.
 - `Netif` - network interface abstraction (i.e. monitoring when the network interface is up or down, and what is its IP configuration). For IP IO, the stack uses the [`edge-nal`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal) crate, and is thus compatible with [`STD`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal-std) and [`Embassy`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal-embassy).
 - `Modem` (for BLE &Wifi only) - abstraction of the device radio, that can operate either in Wifi, or in BLE mode.
 
