@@ -20,7 +20,7 @@ Instantiate it and then call `MatterStack::<...>::run(...)`.
 
 Using `MatterStack<...>` hard-codes the following:
 * _One large future_: The Matter stack is assembled as one large future which is not `Send`. Using an executor to poll that future together with others is still possible, but the executor should be a local one (i.e. Tokio's `LocalSet`, `async_executor::LocalExecutor` and so on).
-* _Allocation strategy_: a number of large-ish buffers are const-allocated inside the `MatterStack` struct. This allows the whole stack to be statically-allocated with `StaticConstCell` - yet - that would eat up 20 to 60K of your flash size, depending on the selected number of maximum number of subscriptions, exchange buffers and so on. A different allocation strategy might be provided in future.
+* _Allocation strategy_: a number of large-ish buffers are const-allocated inside the `MatterStack` struct. This allows the whole stack to be statically-allocated with `ConstStaticCell` - yet - that would eat up 20 to 60K of your flash size, depending on the selected number of maximum number of subscriptions, exchange buffers and so on. A different allocation strategy might be provided in future.
 
 ## The example is STD-only, uses `DummyNetif` and `DummyPersist`, and does not speak Wifi and BLE?
 
