@@ -1,9 +1,9 @@
 use embassy_futures::select::select;
-use embassy_sync::blocking_mutex::raw::RawMutex;
+use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 
 use rs_matter::{error::Error, Matter};
 
-use crate::wifi::WifiContext;
+use crate::{network::Embedding, wifi::WifiContext, Eth, MatterStack, WifiBle, MAX_WIFI_NETWORKS};
 
 /// A persistent storage manager for the Matter stack.
 pub trait Persist {
@@ -72,9 +72,43 @@ where
     M: RawMutex,
 {
     store: T,
+    buf: &'b mut [u8],
     matter: &'a Matter<'a>,
     wifi_networks: Option<&'a WifiContext<N, M>>,
-    buf: &'b mut [u8],
+}
+
+impl<'a, 'b, T> KvPersist<'a, 'b, T, 0, NoopRawMutex>
+where
+    T: KvStore,
+{
+    pub fn new_eth<E>(store: T, buf: &'b mut [u8], stack: &'a MatterStack<Eth<E>>) -> Self
+    where
+        E: Embedding + 'static,
+    {
+        Self::wrap(store, buf, stack.matter(), None)
+    }
+}
+
+impl<'a, 'b, T, M> KvPersist<'a, 'b, T, MAX_WIFI_NETWORKS, M>
+where
+    T: KvStore,
+    M: RawMutex,
+{
+    pub fn new_wifi_ble<E>(
+        store: T,
+        buf: &'b mut [u8],
+        stack: &'a MatterStack<WifiBle<M, E>>,
+    ) -> Self
+    where
+        E: Embedding + 'static,
+    {
+        Self::wrap(
+            store,
+            buf,
+            stack.matter(),
+            Some(stack.network().wifi_context()),
+        )
+    }
 }
 
 impl<'a, 'b, T, const N: usize, M> KvPersist<'a, 'b, T, N, M>
@@ -82,17 +116,17 @@ where
     T: KvStore,
     M: RawMutex,
 {
-    pub fn new(
+    pub fn wrap(
         store: T,
+        buf: &'b mut [u8],
         matter: &'a Matter<'a>,
         wifi_networks: Option<&'a WifiContext<N, M>>,
-        buf: &'b mut [u8],
     ) -> Self {
         Self {
             store,
+            buf,
             matter,
             wifi_networks,
-            buf,
         }
     }
 

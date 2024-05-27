@@ -60,6 +60,10 @@ where
             embedding: E::INIT,
         }
     }
+
+    pub fn wifi_context(&self) -> &WifiContext<MAX_WIFI_NETWORKS, M> {
+        &self.wifi_context
+    }
 }
 
 impl<M: RawMutex, E> Network for WifiBle<M, E>
