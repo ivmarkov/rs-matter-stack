@@ -28,9 +28,9 @@ edge-nal-std = { git = "https://github.com/ivmarkov/edge-net" }
 #edge-nal-std = { path = "../edge-net/edge-nal" }
 
 [features]
-default = ["os"]
-zeroconf = ["os"]
-os = ["std", "rs-matter/os", "embassy-time/std", "embassy-time/generic-queue"]
+zeroconf = ["os", "rs-matter/zeroconf"]
+os = ["backtrace", "rs-matter/os", "embassy-time/std", "embassy-time/generic-queue"]
+backtrace = ["std", "rs-matter/backtrace"]
 async-io-mini = ["std", "edge-nal-std/async-io-mini"]
 std = ["rs-matter/std", "edge-nal-std/async-io"]
 

@@ -12,10 +12,7 @@ where
 {
     async fn send_to(&mut self, data: &[u8], addr: Address) -> Result<(), Error> {
         if let Address::Udp(remote) = addr {
-            self.0
-                .send(remote, data)
-                .await
-                .map_err(|_| ErrorCode::StdIoError)?;
+            self.0.send(remote, data).await.map_err(map_err)?;
 
             Ok(())
         } else {
@@ -29,18 +26,18 @@ where
     T: UdpReceive + Readable,
 {
     async fn wait_available(&mut self) -> Result<(), Error> {
-        self.0.readable().await.map_err(|_| ErrorCode::StdIoError)?;
+        self.0.readable().await.map_err(map_err)?;
 
         Ok(())
     }
 
     async fn recv_from(&mut self, buffer: &mut [u8]) -> Result<(usize, Address), Error> {
-        let (size, addr) = self
-            .0
-            .receive(buffer)
-            .await
-            .map_err(|_| ErrorCode::StdIoError)?;
+        let (size, addr) = self.0.receive(buffer).await.map_err(map_err)?;
 
         Ok((size, Address::Udp(addr)))
     }
+}
+
+fn map_err<E>(_: E) -> Error {
+    ErrorCode::StdIoError.into() // TODO
 }

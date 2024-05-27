@@ -27,13 +27,14 @@ use rs_matter::data_model::cluster_on_off;
 use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::data_model::objects::{Endpoint, HandlerCompat, Node};
 use rs_matter::data_model::system_model::descriptor;
+use rs_matter::error::Error;
 use rs_matter::secure_channel::spake2p::VerifierData;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::CommissioningData;
 
 use rs_matter_stack::netif::DummyNetif;
 use rs_matter_stack::persist::DummyPersist;
-use rs_matter_stack::{Error, EthMatterStack};
+use rs_matter_stack::EthMatterStack;
 
 use static_cell::ConstStaticCell;
 
@@ -74,7 +75,7 @@ fn main() -> Result<(), Error> {
     // not being very intelligent w.r.t. stack usage in async functions
     let mut matter = pin!(stack.run(
         // Will not persist anything
-        DummyPersist::default(),
+        DummyPersist,
         // Will use the default network interface and will assume it is always up
         DummyNetif::default(),
         // Hard-coded for demo purposes

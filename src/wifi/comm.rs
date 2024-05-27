@@ -203,6 +203,7 @@ where
                     .unwrap();
 
                 state.changed = true;
+                self.networks.state_changed.notify();
 
                 info!("Updated network with SSID {}", state.networks[index].ssid);
 
@@ -228,6 +229,7 @@ where
                 match state.networks.push(network) {
                     Ok(_) => {
                         state.changed = true;
+                        self.networks.state_changed.notify();
 
                         info!(
                             "Added network with SSID {}",
@@ -278,6 +280,7 @@ where
                 // Found
                 let network = state.networks.remove(index);
                 state.changed = true;
+                self.networks.state_changed.notify();
 
                 info!("Removed network with SSID {}", network.ssid);
 
@@ -325,6 +328,8 @@ where
             let mut state = state.borrow_mut();
 
             state.connect_requested = Some(ssid.try_into().unwrap());
+            state.changed = true;
+            self.networks.state_changed.notify();
         });
 
         let writer = encoder.with_command(ResponseCommands::NetworkConfigResponse as _)?;
@@ -373,6 +378,7 @@ where
                         .unwrap();
 
                     state.changed = true;
+                    self.networks.state_changed.notify();
 
                     info!(
                         "Network with SSID {} reordered to index {}",

@@ -19,12 +19,12 @@ use rs_matter::data_model::sdm::wifi_nw_diagnostics;
 use rs_matter::data_model::sdm::wifi_nw_diagnostics::{
     WiFiSecurity, WiFiVersion, WifiNwDiagCluster, WifiNwDiagData,
 };
+use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::transport::network::btp::{Btp, BtpContext, GattPeripheral};
 use rs_matter::utils::select::Coalesce;
 use rs_matter::CommissioningData;
 
-use crate::error::Error;
 use crate::modem::{Modem, WifiDevice};
 use crate::netif::Netif;
 use crate::network::{Embedding, Network};
@@ -147,7 +147,7 @@ where
     ) -> Result<(), Error>
     where
         H: AsyncHandler + AsyncMetadata,
-        P: Persist<WifiBle<M, E>>,
+        P: Persist,
         W: Wifi,
         I: Netif + UdpBind,
     {
@@ -175,7 +175,7 @@ where
     ) -> Result<(), Error>
     where
         H: AsyncHandler + AsyncMetadata,
-        P: Persist<WifiBle<M, E>>,
+        P: Persist,
         G: GattPeripheral,
     {
         info!("Running Matter in commissioning mode (BLE)");
@@ -213,7 +213,7 @@ where
         handler: H,
     ) -> Result<(), Error>
     where
-        P: Persist<WifiBle<M, E>>,
+        P: Persist,
         O: Modem,
         H: AsyncHandler + AsyncMetadata,
     {
@@ -230,8 +230,10 @@ where
 
                 let mut main =
                     pin!(self.commission(&mut persist, gatt, dev_comm.clone(), &handler));
-                let mut wait_network_connect =
-                    pin!(self.network.wifi_context.wait_network_connect());
+                let mut wait_network_connect = pin!(async {
+                    self.network.wifi_context.wait_network_connect().await;
+                    Ok(())
+                });
 
                 select(&mut main, &mut wait_network_connect)
                     .coalesce()

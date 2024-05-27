@@ -1,5 +1,7 @@
 use core::fmt;
-use core::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+use core::net::{Ipv4Addr, Ipv6Addr};
+
+use rs_matter::error::Error;
 
 /// Async trait for accessing the `EspNetif` network interface (netif) of a driver.
 ///
@@ -8,21 +10,21 @@ use core::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 /// be mutably operating on the L2 driver below the netif, or on the netif itself.
 pub trait Netif {
     /// Return the active configuration of the network interface, if any
-    fn get_conf(&self) -> Option<NetifConf>;
+    async fn get_conf(&self) -> Result<Option<NetifConf>, Error>;
 
     /// Wait until the network interface configuration changes.
-    async fn wait_conf_change(&self);
+    async fn wait_conf_change(&self) -> Result<(), Error>;
 }
 
 impl<T> Netif for &T
 where
     T: Netif,
 {
-    fn get_conf(&self) -> Option<NetifConf> {
-        (**self).get_conf()
+    async fn get_conf(&self) -> Result<Option<NetifConf>, Error> {
+        (**self).get_conf().await
     }
 
-    async fn wait_conf_change(&self) {
+    async fn wait_conf_change(&self) -> Result<(), Error> {
         (**self).wait_conf_change().await
     }
 }
@@ -31,11 +33,11 @@ impl<T> Netif for &mut T
 where
     T: Netif,
 {
-    fn get_conf(&self) -> Option<NetifConf> {
-        (**self).get_conf()
+    async fn get_conf(&self) -> Result<Option<NetifConf>, Error> {
+        (**self).get_conf().await
     }
 
-    async fn wait_conf_change(&self) {
+    async fn wait_conf_change(&self) -> Result<(), Error> {
         (**self).wait_conf_change().await
     }
 }
@@ -109,16 +111,16 @@ impl Default for DummyNetif {
 }
 
 impl Netif for DummyNetif {
-    fn get_conf(&self) -> Option<NetifConf> {
-        Some(NetifConf {
+    async fn get_conf(&self) -> Result<Option<NetifConf>, Error> {
+        Ok(Some(NetifConf {
             ipv4: self.ipv4,
             ipv6: self.ipv6,
             interface: self.interface,
             mac: self.mac,
-        })
+        }))
     }
 
-    async fn wait_conf_change(&self) {
+    async fn wait_conf_change(&self) -> Result<(), Error> {
         // DummyNetif does not track any changes
         core::future::pending().await
     }
@@ -130,7 +132,7 @@ impl edge_nal::UdpBind for DummyNetif {
 
     type Socket<'a> = edge_nal_std::UdpSocket;
 
-    async fn bind(&self, addr: SocketAddr) -> Result<Self::Socket<'_>, Self::Error> {
+    async fn bind(&self, addr: core::net::SocketAddr) -> Result<Self::Socket<'_>, Self::Error> {
         edge_nal_std::Stack::new().bind(addr).await
     }
 }

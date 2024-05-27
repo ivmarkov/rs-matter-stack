@@ -21,14 +21,14 @@ use rs_matter::data_model::core::IMBuffer;
 use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata};
 use rs_matter::data_model::sdm::dev_att::DevAttDataFetcher;
 use rs_matter::data_model::subscriptions::Subscriptions;
-use rs_matter::error::ErrorCode;
+use rs_matter::error::{Error, ErrorCode};
 use rs_matter::mdns::{Mdns, MdnsService};
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::transport::network::{NetworkReceive, NetworkSend};
 use rs_matter::utils::buf::PooledBuffers;
-use rs_matter::utils::epoch::{sys_epoch, Epoch};
-use rs_matter::utils::rand::{sys_rand, Rand};
+use rs_matter::utils::epoch::Epoch;
+use rs_matter::utils::rand::Rand;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::signal::Signal;
 use rs_matter::{CommissioningData, Matter, MATTER_PORT};
@@ -37,7 +37,6 @@ use crate::netif::{Netif, NetifConf};
 use crate::network::Network;
 use crate::persist::Persist;
 
-pub use error::*;
 pub use eth::*;
 pub use wifible::*;
 
@@ -50,7 +49,6 @@ extern crate std;
 #[macro_use]
 extern crate alloc;
 
-mod error;
 mod eth;
 pub mod modem;
 pub mod netif;
@@ -108,7 +106,7 @@ where
     network: N,
     #[allow(unused)]
     mdns: MdnsType<'a>,
-    ip_info: Signal<NoopRawMutex, Option<NetifConf>>,
+    netif_conf: Signal<NoopRawMutex, Option<NetifConf>>,
 }
 
 impl<'a, N> MatterStack<'a, N>
@@ -121,7 +119,13 @@ where
         dev_det: &'a BasicInfoConfig,
         dev_att: &'a dyn DevAttDataFetcher,
     ) -> Self {
-        Self::new(dev_det, dev_att, MdnsType::default(), sys_epoch, sys_rand)
+        Self::new(
+            dev_det,
+            dev_att,
+            MdnsType::default(),
+            rs_matter::utils::epoch::sys_epoch,
+            rs_matter::utils::rand::sys_rand,
+        )
     }
 
     /// Create a new `MatterStack` instance.
@@ -145,7 +149,7 @@ where
             subscriptions: Subscriptions::new(),
             network: N::INIT,
             mdns,
-            ip_info: Signal::new(None),
+            netif_conf: Signal::new(None),
         }
     }
 
@@ -177,9 +181,9 @@ where
     ///
     /// Useful when user code needs to bring up/down its own IP services depending on
     /// when the netif controlled by Matter goes up, down or changes its IP configuration.
-    pub async fn get_netif_info(&self) -> Option<NetifConf> {
-        self.ip_info
-            .wait(|netif_info| Some(netif_info.clone()))
+    pub async fn get_netif_conf(&self) -> Option<NetifConf> {
+        self.netif_conf
+            .wait(|netif_conf| Some(netif_conf.clone()))
             .await
     }
 
@@ -192,7 +196,7 @@ where
         &self,
         prev_netif_info: Option<&NetifConf>,
     ) -> Option<NetifConf> {
-        self.ip_info
+        self.netif_conf
             .wait(|netif_info| (netif_info.as_ref() != prev_netif_info).then(|| netif_info.clone()))
             .await
     }
@@ -211,14 +215,14 @@ where
     ) -> Result<(), Error>
     where
         H: AsyncHandler + AsyncMetadata,
-        P: Persist<N>,
+        P: Persist,
         I: Netif + UdpBind,
     {
         loop {
             info!("Waiting for the network to come up...");
 
             let reset_netif_info = || {
-                self.ip_info.modify(|global_netif_info| {
+                self.netif_conf.modify(|global_netif_info| {
                     if global_netif_info.is_some() {
                         *global_netif_info = None;
                         (true, ())
@@ -232,18 +236,18 @@ where
 
             reset_netif_info();
 
-            let ip_info = loop {
-                if let Some(ip_info) = netif.get_conf() {
-                    break ip_info;
+            let netif_conf = loop {
+                if let Some(netif_conf) = netif.get_conf().await? {
+                    break netif_conf;
                 }
 
-                netif.wait_conf_change().await;
+                netif.wait_conf_change().await?;
             };
 
-            info!("Got IP network: {ip_info}");
+            info!("Got IP network: {netif_conf}");
 
-            self.ip_info.modify(|global_ip_info| {
-                *global_ip_info = Some(ip_info.clone());
+            self.netif_conf.modify(|global_ip_info| {
+                *global_ip_info = Some(netif_conf.clone());
 
                 (true, ())
             });
@@ -253,7 +257,7 @@ where
                     Ipv6Addr::UNSPECIFIED,
                     MATTER_PORT,
                     0,
-                    ip_info.interface,
+                    netif_conf.interface,
                 )))
                 .await
                 .map_err(|_| ErrorCode::StdIoError)?;
@@ -267,17 +271,17 @@ where
                 dev_comm.clone(),
                 &handler
             ));
-            let mut mdns = pin!(self.run_builtin_mdns(&netif, &ip_info));
+            let mut mdns = pin!(self.run_builtin_mdns(&netif, &netif_conf));
             let mut down = pin!(async {
                 loop {
-                    let next = netif.get_conf();
+                    let next = netif.get_conf().await?;
                     let next = next.as_ref();
 
-                    if Some(&ip_info) != next {
+                    if Some(&netif_conf) != next {
                         break;
                     }
 
-                    netif.wait_conf_change().await;
+                    netif.wait_conf_change().await?;
                 }
 
                 Ok(())
@@ -314,7 +318,7 @@ where
         S: NetworkSend,
         R: NetworkReceive,
         H: AsyncHandler + AsyncMetadata,
-        P: Persist<N>,
+        P: Persist,
     {
         // Reset the Matter transport buffers and all sessions first
         self.matter().reset_transport()?;
@@ -332,10 +336,10 @@ where
 
     async fn run_psm<P>(&self, mut persist: P) -> Result<(), Error>
     where
-        P: Persist<N>,
+        P: Persist,
     {
         if false {
-            persist.run(self.network(), self.matter()).await
+            persist.run().await
         } else {
             core::future::pending().await
         }

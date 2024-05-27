@@ -10,10 +10,10 @@ use rs_matter::data_model::root_endpoint::{handler, OperNwType, RootEndpointHand
 use rs_matter::data_model::sdm::ethernet_nw_diagnostics::EthNwDiagCluster;
 use rs_matter::data_model::sdm::nw_commissioning::EthNwCommCluster;
 use rs_matter::data_model::sdm::{ethernet_nw_diagnostics, nw_commissioning};
+use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::CommissioningData;
 
-use crate::error::Error;
 use crate::netif::Netif;
 use crate::network::{Embedding, Network};
 use crate::persist::Persist;
@@ -87,7 +87,7 @@ where
     ) -> Result<(), Error>
     where
         H: AsyncHandler + AsyncMetadata,
-        P: Persist<Eth<E>> + 'static,
+        P: Persist,
         I: Netif + UdpBind,
     {
         info!("Matter Stack memory: {}B", core::mem::size_of_val(self));

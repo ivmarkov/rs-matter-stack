@@ -4,7 +4,10 @@ use embassy_time::{Duration, Timer};
 use embedded_svc::wifi::{self, asynch::Wifi, AuthMethod};
 use log::{error, info, warn};
 
-use rs_matter::data_model::sdm::nw_commissioning::NetworkCommissioningStatus;
+use rs_matter::{
+    data_model::sdm::nw_commissioning::NetworkCommissioningStatus,
+    error::{Error, ErrorCode},
+};
 
 use super::{WifiContext, WifiCredentials, WifiStatus};
 
@@ -41,7 +44,7 @@ where
     ///
     /// This function will try to connect to the networks in the `WifiContext`
     /// and will retry the connection in case of a failure.
-    pub async fn run(&mut self) -> Result<(), crate::error::Error> {
+    pub async fn run(&mut self) -> Result<(), Error> {
         let mut ssid = None;
 
         loop {
@@ -54,7 +57,7 @@ where
             let Some(creds) = creds else {
                 // No networks, bail out
                 warn!("No networks found");
-                return Err(crate::error::Error::InvalidState);
+                return Err(ErrorCode::Invalid.into()); // TODO
             };
 
             ssid = Some(creds.ssid.clone());

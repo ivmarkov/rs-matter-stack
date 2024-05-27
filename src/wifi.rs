@@ -120,6 +120,7 @@ where
     M: RawMutex,
 {
     state: blocking_mutex::Mutex<M, RefCell<WifiState<N>>>,
+    state_changed: Notification<M>,
     network_connect_requested: Notification<M>,
 }
 
@@ -137,6 +138,7 @@ where
                 status: None,
                 changed: false,
             })),
+            state_changed: Notification::new(),
             network_connect_requested: Notification::new(),
         }
     }
@@ -156,11 +158,20 @@ where
         self.state.lock(|state| state.borrow_mut().store(buf))
     }
 
+    pub fn is_changed(&self) -> bool {
+        self.state.lock(|state| state.borrow().changed)
+    }
+
+    pub fn is_network_connect_requested(&self) -> bool {
+        self.state
+            .lock(|state| state.borrow().connect_requested.is_some())
+    }
+
     /// Wait until signalled by the Matter stack that a network connect request is issued during commissioning.
     ///
     /// Typically, this is a signal that the BLE/BTP transport should be teared down and
     /// the Wifi transport should be brought up.
-    pub async fn wait_network_connect(&self) -> Result<(), crate::error::Error> {
+    pub async fn wait_network_connect(&self) {
         loop {
             if self
                 .state
@@ -177,8 +188,16 @@ where
         );
 
         Timer::after(Duration::from_secs(4)).await;
+    }
 
-        Ok(())
+    pub async fn wait_state_changed(&self) {
+        loop {
+            if self.state.lock(|state| state.borrow().changed) {
+                break;
+            }
+
+            self.state_changed.wait().await;
+        }
     }
 }
 

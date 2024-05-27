@@ -40,6 +40,9 @@ jobs:
       - name: Clippy
         run: cargo clippy --no-deps --no-default-features --features ${{matrix.features}} -- -Dwarnings
 
+      - name: Build | no_std
+        run: cargo build --no-default-features
+
       - name: Build
         run: cargo build --no-default-features --features ${{matrix.features}}
 
