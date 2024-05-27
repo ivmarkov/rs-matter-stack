@@ -2,12 +2,11 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::{Duration, Timer};
 
 use embedded_svc::wifi::{self, asynch::Wifi, AuthMethod};
+
 use log::{error, info, warn};
 
-use rs_matter::{
-    data_model::sdm::nw_commissioning::NetworkCommissioningStatus,
-    error::{Error, ErrorCode},
-};
+use rs_matter::data_model::sdm::nw_commissioning::NetworkCommissioningStatus;
+use rs_matter::error::{Error, ErrorCode};
 
 use super::{WifiContext, WifiCredentials, WifiStatus};
 

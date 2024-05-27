@@ -1,13 +1,13 @@
 use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 
+use rs_matter::error::Error;
+use rs_matter::utils::buf::{BufferAccess, PooledBuffers};
 use rs_matter::Matter;
-use rs_matter::{
-    error::Error,
-    utils::buf::{BufferAccess, PooledBuffer, PooledBuffers},
-};
 
-use crate::{network::Embedding, wifi::WifiContext, Eth, MatterStack, WifiBle, MAX_WIFI_NETWORKS};
+use crate::network::{Embedding, Network};
+use crate::wifi::WifiContext;
+use crate::{Eth, MatterStack, WifiBle, MAX_WIFI_NETWORKS};
 
 /// A persistent storage manager for the Matter stack.
 pub trait Persist {
@@ -66,53 +66,54 @@ impl Default for DummyPersist {
 
 /// A persistent storage implementation that relies on a BLOB key-value storage
 /// represented by the `KvBlobStore` trait.
-pub struct KvPersist<'a, 'b, T, const N: usize, M>
+pub struct KvPersist<'a, T, const N: usize, M>
 where
     M: RawMutex,
 {
     store: T,
-    buf: &'b mut [u8],
+    buf: &'a PooledBuffers<1, NoopRawMutex, KvBlobBuffer>,
     matter: &'a Matter<'a>,
     wifi_networks: Option<&'a WifiContext<N, M>>,
 }
 
-impl<'a, 'b, T> KvPersist<'a, 'b, T, 0, NoopRawMutex>
+impl<'a, T> KvPersist<'a, T, 0, NoopRawMutex>
 where
     T: KvBlobStore,
 {
     /// Create a new `KvPersist` instance for an Ethernet-only Matter stack.
-    pub fn new_eth<E>(store: T, buf: &'b mut [u8], stack: &'a MatterStack<Eth<E>>) -> Self
-    where
-        E: Embedding + 'static,
-    {
-        Self::wrap(store, buf, stack.matter(), None)
-    }
-}
-
-impl<'a, 'b, T, M> KvPersist<'a, 'b, T, MAX_WIFI_NETWORKS, M>
-where
-    T: KvBlobStore,
-    M: RawMutex,
-{
-    /// Create a new `KvPersist` instance for a WiFi/BLE Matter stack.
-    pub fn new_wifi_ble<E>(
-        store: T,
-        buf: &'b mut [u8],
-        stack: &'a MatterStack<WifiBle<M, E>>,
-    ) -> Self
+    pub fn new_eth<E>(store: T, stack: &'a MatterStack<Eth<KvBlobBuf<E>>>) -> Self
     where
         E: Embedding + 'static,
     {
         Self::wrap(
             store,
-            buf,
+            stack.network().embedding().buf(),
+            stack.matter(),
+            None,
+        )
+    }
+}
+
+impl<'a, T, M> KvPersist<'a, T, MAX_WIFI_NETWORKS, M>
+where
+    T: KvBlobStore,
+    M: RawMutex,
+{
+    /// Create a new `KvPersist` instance for a WiFi/BLE Matter stack.
+    pub fn new_wifi_ble<E>(store: T, stack: &'a MatterStack<WifiBle<M, KvBlobBuf<E>>>) -> Self
+    where
+        E: Embedding + 'static,
+    {
+        Self::wrap(
+            store,
+            stack.network().embedding().buf(),
             stack.matter(),
             Some(stack.network().wifi_context()),
         )
     }
 }
 
-impl<'a, 'b, T, const N: usize, M> KvPersist<'a, 'b, T, N, M>
+impl<'a, T, const N: usize, M> KvPersist<'a, T, N, M>
 where
     T: KvBlobStore,
     M: RawMutex,
@@ -120,7 +121,7 @@ where
     /// Create a new `KvPersist` instance.
     pub fn wrap(
         store: T,
-        buf: &'b mut [u8],
+        buf: &'a PooledBuffers<1, NoopRawMutex, KvBlobBuffer>,
         matter: &'a Matter<'a>,
         wifi_networks: Option<&'a WifiContext<N, M>>,
     ) -> Self {
@@ -150,16 +151,19 @@ where
 
     /// Load the Matter stack from the non-volatile storage.
     pub async fn load(&mut self) -> Result<(), Error> {
-        if let Some(data) = self.store.load("acls", self.buf).await? {
+        let mut buf = self.buf.get().await.unwrap();
+        buf.resize_default(KV_BLOB_BUF_SIZE).unwrap();
+
+        if let Some(data) = self.store.load("acls", &mut buf).await? {
             self.matter.load_acls(data)?;
         }
 
-        if let Some(data) = self.store.load("fabrics", self.buf).await? {
+        if let Some(data) = self.store.load("fabrics", &mut buf).await? {
             self.matter.load_fabrics(data)?;
         }
 
         if let Some(wifi_networks) = self.wifi_networks {
-            if let Some(data) = self.store.load("wifi", self.buf).await? {
+            if let Some(data) = self.store.load("wifi", &mut buf).await? {
                 wifi_networks.load(data)?;
             }
         }
@@ -181,19 +185,22 @@ where
 
             select(wait_matter, wait_wifi).await;
 
+            let mut buf = self.buf.get().await.unwrap();
+            buf.resize_default(KV_BLOB_BUF_SIZE).unwrap();
+
             if self.matter.is_changed() {
-                if let Some(data) = self.matter.store_acls(self.buf)? {
+                if let Some(data) = self.matter.store_acls(&mut buf)? {
                     self.store.store("acls", data).await?;
                 }
 
-                if let Some(data) = self.matter.store_fabrics(self.buf)? {
+                if let Some(data) = self.matter.store_fabrics(&mut buf)? {
                     self.store.store("fabrics", data).await?;
                 }
             }
 
             if let Some(wifi_networks) = self.wifi_networks {
                 if wifi_networks.is_changed() {
-                    if let Some(data) = wifi_networks.store(self.buf)? {
+                    if let Some(data) = wifi_networks.store(&mut buf)? {
                         self.store.store("wifi", data).await?;
                     }
                 }
@@ -202,7 +209,7 @@ where
     }
 }
 
-impl<'a, 'b, T, const N: usize, M> Persist for KvPersist<'a, 'b, T, N, M>
+impl<'a, T, const N: usize, M> Persist for KvPersist<'a, T, N, M>
 where
     T: KvBlobStore,
     M: RawMutex,
@@ -376,8 +383,8 @@ where
         }
     }
 
-    pub async fn buf(&self) -> PooledBuffer<'_, 1, NoopRawMutex, KvBlobBuffer> {
-        self.buf.get().await.unwrap()
+    pub fn buf(&self) -> &PooledBuffers<1, NoopRawMutex, KvBlobBuffer> {
+        &self.buf
     }
 
     pub fn embedding(&self) -> &E {

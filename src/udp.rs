@@ -1,6 +1,7 @@
 //! UDP transport implementation for edge-nal
 
 use edge_nal::{Readable, UdpReceive, UdpSend};
+
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::transport::network::{Address, NetworkReceive, NetworkSend};
 
