@@ -219,9 +219,26 @@ where
 
 /// A trait representing a key-value BLOB storage.
 pub trait KvBlobStore {
-    async fn load<'a>(&self, key: &str, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error>;
+    async fn load<'a>(&mut self, key: &str, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error>;
     async fn store(&mut self, key: &str, value: &[u8]) -> Result<(), Error>;
-    async fn remove(&self, key: &str) -> Result<(), Error>;
+    async fn remove(&mut self, key: &str) -> Result<(), Error>;
+}
+
+impl<T> KvBlobStore for &mut T
+where
+    T: KvBlobStore,
+{
+    async fn load<'a>(&mut self, key: &str, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
+        T::load(self, key, buf).await
+    }
+
+    async fn store(&mut self, key: &str, value: &[u8]) -> Result<(), Error> {
+        T::store(self, key, value).await
+    }
+
+    async fn remove(&mut self, key: &str) -> Result<(), Error> {
+        T::remove(self, key).await
+    }
 }
 
 /// An implementation of the `KvBlobStore` trait that stores the BLOBs in a directory.
@@ -309,7 +326,7 @@ impl DirKvStore {
 
 #[cfg(feature = "std")]
 impl KvBlobStore for DirKvStore {
-    async fn load<'a>(&self, key: &str, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
+    async fn load<'a>(&mut self, key: &str, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
         DirKvStore::load(self, key, buf)
     }
 
@@ -317,7 +334,7 @@ impl KvBlobStore for DirKvStore {
         DirKvStore::store(self, key, value)
     }
 
-    async fn remove(&self, key: &str) -> Result<(), Error> {
+    async fn remove(&mut self, key: &str) -> Result<(), Error> {
         DirKvStore::remove(self, key)
     }
 }
