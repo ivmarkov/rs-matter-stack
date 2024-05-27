@@ -28,6 +28,7 @@ edge-nal-std = { git = "https://github.com/ivmarkov/edge-net" }
 #edge-nal-std = { path = "../edge-net/edge-nal" }
 
 [features]
+default = []
 zeroconf = ["os", "rs-matter/zeroconf"]
 os = ["backtrace", "rs-matter/os", "embassy-time/std", "embassy-time/generic-queue"]
 backtrace = ["std", "rs-matter/backtrace"]
