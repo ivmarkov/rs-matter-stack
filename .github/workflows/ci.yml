@@ -28,8 +28,10 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy, rust-src
 
-      - name: Install libdbus and libavahi-client
+      - name: Install libdbus
         run: sudo apt-get install -y libdbus-1-dev
+
+      - name: Install libavahi-client
         run: sudo apt-get install -y libavahi-client-dev
 
       - name: Checkout

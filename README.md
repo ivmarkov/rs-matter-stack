@@ -8,8 +8,6 @@
 
 Configuring and running the [`rs-matter`](https://github.com/project-chip/rs-matter) crate is not trivial, as it is more of a toolkit rather than a monolitic all-in-one runtime.
 
-Users are expected to provide implementations for various `rs-matter` abstractions, like a UDP stack, BLE stack, randomizer, epoch time, responder and so on and so forth and then assemble those for asynchronous execution. 
-
 Furthermore, _operating_ the assembled Matter stack is also challenging, as various features might need to be switched on or off depending on whether Matter is running in commissioning or operating mode, and also depending on the current network connectivity (as in e.g. Wifi signal lost).
 
 **This crate addresses these issues by providing an all-in-one [`MatterStack`](https://github.com/ivmarkov/rs-matter-stack/blob/master/src/lib.rs) assembly that configures `rs-matter` for reliable operation.**
@@ -18,7 +16,7 @@ Instantiate it and then call `MatterStack::<...>::run(...)`.
 
 ## OK, but what would I sacrifice?
 
-Flexibility.
+**Flexibility**.
 
 Using `MatterStack<...>` hard-codes the following:
 * _One large future_: The Matter stack is assembled as one large future which is not `Send`. Using an executor to poll that future together with others is still possible, but the executor should be a local one (i.e. Tokio's `LocalSet`, `async_executor::LocalExecutor` and so on).
