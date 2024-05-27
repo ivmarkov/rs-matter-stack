@@ -1,8 +1,11 @@
 use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 
-use rs_matter::error::Error;
 use rs_matter::Matter;
+use rs_matter::{
+    error::Error,
+    utils::buf::{BufferAccess, PooledBuffer, PooledBuffers},
+};
 
 use crate::{network::Embedding, wifi::WifiContext, Eth, MatterStack, WifiBle, MAX_WIFI_NETWORKS};
 
@@ -337,4 +340,54 @@ impl KvBlobStore for DirKvStore {
     async fn remove(&mut self, key: &str) -> Result<(), Error> {
         DirKvStore::remove(self, key)
     }
+}
+
+const KV_BLOB_BUF_SIZE: usize = 4096;
+
+/// A buffer for the `KvBlobStore` trait.
+pub type KvBlobBuffer = heapless::Vec<u8, KV_BLOB_BUF_SIZE>;
+
+/// An embedding of the buffer necessary for the `KvBlobStore` trait.
+/// Allows the memory of this buffer to be statically allocated and cost-initialized.
+///
+/// Usage:
+/// ```no_run
+/// MatterStack<WifiBle<M, KvBlobBuf<E>>>::new();
+/// ```
+/// or:
+/// ```no_run
+/// MatterStack<Eth<KvBlobBuf<E>>>::new();
+/// ```
+///
+/// ... where `E` can be a next-level, user-supplied embedding or just `()` if the user does not need to embed anything.
+pub struct KvBlobBuf<E = ()> {
+    buf: PooledBuffers<1, NoopRawMutex, KvBlobBuffer>,
+    embedding: E,
+}
+
+impl<E> KvBlobBuf<E>
+where
+    E: Embedding,
+{
+    const fn new() -> Self {
+        Self {
+            buf: PooledBuffers::new(0),
+            embedding: E::INIT,
+        }
+    }
+
+    pub async fn buf(&self) -> PooledBuffer<'_, 1, NoopRawMutex, KvBlobBuffer> {
+        self.buf.get().await.unwrap()
+    }
+
+    pub fn embedding(&self) -> &E {
+        &self.embedding
+    }
+}
+
+impl<E> Embedding for KvBlobBuf<E>
+where
+    E: Embedding,
+{
+    const INIT: Self = Self::new();
 }
