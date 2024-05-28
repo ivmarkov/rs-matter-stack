@@ -154,7 +154,7 @@ where
     type L3<'t> = &'t DummyNetif<U> where Self: 't;
 
     async fn split(&mut self) -> (Self::L2<'_>, Self::L3<'_>) {
-        (DummyL2::new(), &self.0)
+        (DummyL2::new(), self.0)
     }
 }
 
