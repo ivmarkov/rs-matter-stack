@@ -3,7 +3,7 @@ use core::net::{Ipv4Addr, Ipv6Addr};
 
 use rs_matter::error::Error;
 
-/// Async trait for accessing the `EspNetif` network interface (netif) of a driver.
+/// Async trait for accessing the network interface (netif) of a driver.
 ///
 /// Allows sharing the network interface between multiple tasks, where one task
 /// may be waiting for the network interface to be ready, while the other might

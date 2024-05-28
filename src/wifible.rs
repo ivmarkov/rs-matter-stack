@@ -40,9 +40,8 @@ pub const MAX_WIFI_NETWORKS: usize = 2;
 ///
 /// The supported commissioning is of the non-concurrent type (as per the Matter Core spec),
 /// where the device - at any point in time - either runs Bluetooth or Wifi, but not both.
-/// This is done to save memory and to avoid the usage of the ESP IDF Co-exist driver.
-///
-/// The BLE implementation used is the ESP IDF Bluedroid stack (not NimBLE).
+/// This is done to save memory and to avoid the usage of BLE+Wifi co-exist drivers on
+/// devices which share a single wireless radio for both BLE and Wifi.
 pub struct WifiBle<M: RawMutex, E = ()> {
     btp_context: BtpContext<M>,
     wifi_context: WifiContext<MAX_WIFI_NETWORKS, M>,

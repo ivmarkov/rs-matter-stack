@@ -315,7 +315,9 @@ where
     ) -> Result<(), Error> {
         // TODO: Check failsafe status
 
-        // Non-concurrent commissioning scenario (i.e. only BLE is active, and the ESP IDF co-exist mode is not enabled)
+        // Non-concurrent commissioning scenario
+        // (i.e. only BLE is active, and the device BLE+Wifi co-exist
+        // driver is not running, or does not even exist)
 
         let ssid = core::str::from_utf8(req.network_id.0).unwrap();
 
