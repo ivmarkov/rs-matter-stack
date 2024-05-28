@@ -33,11 +33,13 @@ zeroconf = ["os", "rs-matter/zeroconf"]
 os = ["backtrace", "rs-matter/os", "embassy-time/std", "embassy-time/generic-queue"]
 backtrace = ["std", "rs-matter/backtrace"]
 async-io-mini = ["std", "edge-nal-std/async-io-mini"]
-std = ["rs-matter/std", "edge-nal-std/async-io"]
+std = ["alloc", "rs-matter/std", "edge-nal-std/async-io"]
+alloc = ["embedded-svc/alloc"]
 
 [dependencies]
 log = { version = "0.4", default-features = false }
 heapless = "0.8"
+enumset = { version = "1", default-features = false }
 scopeguard = { version = "1", default-features = false }
 embassy-futures = "0.1"
 embassy-sync = "0.5"

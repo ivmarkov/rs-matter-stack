@@ -1,6 +1,7 @@
 use core::fmt;
 use core::net::{Ipv4Addr, Ipv6Addr};
 
+use edge_nal::UdpBind;
 use rs_matter::error::Error;
 
 /// Async trait for accessing the network interface (netif) of a driver.
@@ -55,6 +56,23 @@ pub struct NetifConf {
     pub mac: [u8; 6],
 }
 
+impl NetifConf {
+    pub const fn new() -> Self {
+        Self {
+            ipv4: Ipv4Addr::UNSPECIFIED,
+            ipv6: Ipv6Addr::UNSPECIFIED,
+            interface: 0,
+            mac: [0; 6],
+        }
+    }
+}
+
+impl Default for NetifConf {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl fmt::Display for NetifConf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -80,44 +98,31 @@ impl fmt::Display for NetifConf {
 /// (by default `Ipv4Addr::UNSPECIFIED` / `Ipv6Addr::UNSPECIFIED` and 0).
 ///
 /// Useful for demoing purposes
-pub struct DummyNetif {
-    ipv4: Ipv4Addr,
-    ipv6: Ipv6Addr,
-    interface: u32,
-    mac: [u8; 6],
+pub struct DummyNetif<U> {
+    conf: Option<NetifConf>,
+    bind: U,
 }
 
-impl DummyNetif {
+impl<U> DummyNetif<U> {
     /// Create a new `DummyNetif` with the given IP configuration and MAC address
-    pub const fn new(ipv4: Ipv4Addr, ipv6: Ipv6Addr, interface: u32, mac: [u8; 6]) -> Self {
-        Self {
-            ipv4,
-            ipv6,
-            interface,
-            mac,
-        }
+    pub const fn new(conf: Option<NetifConf>, bind: U) -> Self {
+        Self { conf, bind }
     }
 }
 
-impl Default for DummyNetif {
+#[cfg(feature = "std")]
+impl Default for DummyNetif<edge_nal_std::Stack> {
     fn default() -> Self {
         Self {
-            ipv4: Ipv4Addr::UNSPECIFIED,
-            ipv6: Ipv6Addr::UNSPECIFIED,
-            interface: 0,
-            mac: [1, 2, 3, 4, 5, 6],
+            conf: Some(NetifConf::default()),
+            bind: edge_nal_std::Stack::new(),
         }
     }
 }
 
-impl Netif for DummyNetif {
+impl<U> Netif for DummyNetif<U> {
     async fn get_conf(&self) -> Result<Option<NetifConf>, Error> {
-        Ok(Some(NetifConf {
-            ipv4: self.ipv4,
-            ipv6: self.ipv6,
-            interface: self.interface,
-            mac: self.mac,
-        }))
+        Ok(self.conf.clone())
     }
 
     async fn wait_conf_change(&self) -> Result<(), Error> {
@@ -126,13 +131,15 @@ impl Netif for DummyNetif {
     }
 }
 
-#[cfg(feature = "std")]
-impl edge_nal::UdpBind for DummyNetif {
-    type Error = std::io::Error;
+impl<U> edge_nal::UdpBind for DummyNetif<U>
+where
+    U: UdpBind,
+{
+    type Error = U::Error;
 
-    type Socket<'a> = edge_nal_std::UdpSocket;
+    type Socket<'a> = U::Socket<'a> where Self: 'a;
 
     async fn bind(&self, addr: core::net::SocketAddr) -> Result<Self::Socket<'_>, Self::Error> {
-        edge_nal_std::Stack::new().bind(addr).await
+        self.bind.bind(addr).await
     }
 }
