@@ -113,7 +113,7 @@ impl Default for DummyLinuxModem {
         Self::new(
             Some(NetifConf::default()),
             edge_nal_std::Stack::new(),
-            || rs_matter::transport::network::btp::BuiltinGattPeripheral::new(Some("BT")),
+            || rs_matter::transport::network::btp::BuiltinGattPeripheral::new(None),
         )
     }
 }
