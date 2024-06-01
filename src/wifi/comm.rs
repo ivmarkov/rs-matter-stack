@@ -334,7 +334,7 @@ where
             self.networks.state_changed.notify();
         });
 
-        let writer = encoder.with_command(ResponseCommands::NetworkConfigResponse as _)?;
+        let writer = encoder.with_command(ResponseCommands::ConnectNetworkResponse as _)?;
 
         // As per spec, return success even though though whether we'll be able to connect to the network
         // will become apparent later, once we switch to Wifi
