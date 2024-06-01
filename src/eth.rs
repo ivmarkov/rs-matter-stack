@@ -66,6 +66,7 @@ where
             HandlerCompat(EthNwCommCluster::new(*self.matter().borrow())),
             ethernet_nw_diagnostics::ID,
             HandlerCompat(EthNwDiagCluster::new(*self.matter().borrow())),
+            true,
         )
     }
 
