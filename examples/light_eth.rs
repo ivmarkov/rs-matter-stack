@@ -42,6 +42,10 @@ use static_cell::ConstStaticCell;
 mod dev_att;
 
 fn main() -> Result<(), Error> {
+    env_logger::init_from_env(
+        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
+    );
+
     info!("Starting...");
 
     // Take the Matter stack (can be done only once),

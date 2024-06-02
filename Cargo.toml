@@ -49,6 +49,8 @@ edge-nal-std = { version = "0.2", optional = true }
 [dev-dependencies]
 static_cell = "2.1"
 futures-lite = "1"
+async-compat = "0.2"
+env_logger = "0.11"
 
 [[example]]
 name = "light_eth"
