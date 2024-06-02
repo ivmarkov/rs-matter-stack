@@ -97,7 +97,10 @@ where
         handler(
             0,
             self.matter(),
-            comm::WifiNwCommCluster::new(*self.matter().borrow(), &self.network.wifi_context),
+            HandlerCompat(comm::WifiNwCommCluster::new(
+                *self.matter().borrow(),
+                &self.network.wifi_context,
+            )),
             wifi_nw_diagnostics::ID,
             HandlerCompat(WifiNwDiagCluster::new(
                 *self.matter().borrow(),
@@ -262,6 +265,6 @@ where
 
 pub type WifiBleRootEndpointHandler<'a, M> = RootEndpointHandler<
     'a,
-    comm::WifiNwCommCluster<'a, MAX_WIFI_NETWORKS, M>,
+    HandlerCompat<comm::WifiNwCommCluster<'a, MAX_WIFI_NETWORKS, M>>,
     HandlerCompat<WifiNwDiagCluster>,
 >;
