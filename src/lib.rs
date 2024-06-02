@@ -5,6 +5,8 @@
 #![allow(unexpected_cfgs)]
 #![allow(clippy::declare_interior_mutable_const)]
 #![warn(clippy::large_futures)]
+#![warn(clippy::large_stack_frames)]
+#![warn(clippy::large_types_passed_by_value)]
 
 use core::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 use core::pin::pin;
@@ -115,6 +117,8 @@ where
 {
     /// Create a new `MatterStack` instance.
     #[cfg(feature = "std")]
+    #[allow(clippy::large_stack_frames)]
+    #[inline(always)]
     pub const fn new_default(
         dev_det: &'a BasicInfoConfig,
         dev_att: &'a dyn DevAttDataFetcher,
@@ -129,6 +133,8 @@ where
     }
 
     /// Create a new `MatterStack` instance.
+    #[allow(clippy::large_stack_frames)]
+    #[inline(always)]
     pub const fn new(
         dev_det: &'a BasicInfoConfig,
         dev_att: &'a dyn DevAttDataFetcher,

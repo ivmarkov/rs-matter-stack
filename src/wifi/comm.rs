@@ -3,8 +3,8 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use log::{error, info, warn};
 
 use rs_matter::data_model::objects::{
-    AsyncHandler, AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, CmdDataEncoder,
-    CmdDetails, Dataver,
+    AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, CmdDataEncoder, CmdDetails, Dataver,
+    Handler,
 };
 use rs_matter::data_model::sdm::nw_commissioning::{
     AddWifiNetworkRequest, Attributes, Commands, ConnectNetworkRequest, ConnectNetworkResponse,
@@ -118,7 +118,7 @@ where
     }
 
     /// Invoke a command.
-    pub async fn invoke(
+    pub fn invoke(
         &self,
         exchange: &Exchange<'_>,
         cmd: &CmdDetails<'_>,
@@ -140,8 +140,7 @@ where
             }
             Commands::ConnectNetwork => {
                 info!("ConnectNetwork");
-                self.connect_network(exchange, &ConnectNetworkRequest::from_tlv(data)?, encoder)
-                    .await?;
+                self.connect_network(exchange, &ConnectNetworkRequest::from_tlv(data)?, encoder)?;
             }
             Commands::ReorderNetwork => {
                 info!("ReorderNetwork");
@@ -307,7 +306,7 @@ where
         })
     }
 
-    async fn connect_network(
+    fn connect_network(
         &self,
         _exchange: &Exchange<'_>,
         req: &ConnectNetworkRequest<'_>,
@@ -425,26 +424,22 @@ where
     }
 }
 
-impl<'a, const N: usize, M> AsyncHandler for WifiNwCommCluster<'a, N, M>
+impl<'a, const N: usize, M> Handler for WifiNwCommCluster<'a, N, M>
 where
     M: RawMutex,
 {
-    async fn read<'m>(
-        &'m self,
-        attr: &'m AttrDetails<'_>,
-        encoder: AttrDataEncoder<'m, '_, '_>,
-    ) -> Result<(), Error> {
+    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
         WifiNwCommCluster::read(self, attr, encoder)
     }
 
-    async fn invoke<'m>(
-        &'m self,
-        exchange: &'m Exchange<'_>,
-        cmd: &'m CmdDetails<'_>,
-        data: &'m TLVElement<'_>,
-        encoder: CmdDataEncoder<'m, '_, '_>,
+    fn invoke(
+        &self,
+        exchange: &Exchange<'_>,
+        cmd: &CmdDetails,
+        data: &TLVElement,
+        encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
-        WifiNwCommCluster::invoke(self, exchange, cmd, data, encoder).await
+        WifiNwCommCluster::invoke(self, exchange, cmd, data, encoder)
     }
 }
 

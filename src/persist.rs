@@ -376,6 +376,8 @@ impl<E> KvBlobBuf<E>
 where
     E: Embedding,
 {
+    #[allow(clippy::large_stack_frames)]
+    #[inline(always)]
     const fn new() -> Self {
         Self {
             buf: PooledBuffers::new(0),
