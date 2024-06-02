@@ -4,7 +4,7 @@ use core::net::{Ipv4Addr, Ipv6Addr};
 use edge_nal::UdpBind;
 use rs_matter::error::Error;
 
-#[cfg(all(unix, feature = "std"))]
+#[cfg(all(unix, feature = "std", not(target_os = "espidf")))]
 pub use unix::UnixNetif;
 
 /// Async trait for accessing the network interface (netif) of a driver.
@@ -147,7 +147,7 @@ where
     }
 }
 
-//#[cfg(all(unix, feature = "std"))]
+#[cfg(all(unix, feature = "std", not(target_os = "espidf")))]
 mod unix {
     use alloc::string::String;
 
