@@ -26,7 +26,7 @@ Using `MatterStack<...>` hard-codes the following:
 
 The core of `rs-matter-stack` is `no_std` and no-`alloc`.
 
-You need to provide implementations of the following platform-specific traits for your embedded platform:
+You need to provide platform-specific implementations of the following traits for your embedded platform:
 - `Persist` - non-volatile storage abstraction. Easiest is to implement `KvBlobStore` instead, and then use it with the provided `KvPersist` utility. 
   - For STD, `rs-matter-stack` provides `DirKvBlobStore`.
 - `Netif` - network interface abstraction (i.e. monitoring when the network interface is up or down, and what is its IP configuration).
