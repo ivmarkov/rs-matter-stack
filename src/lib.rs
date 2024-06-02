@@ -404,11 +404,11 @@ where
                 socket
                     .join_v4(MDNS_IPV4_BROADCAST_ADDR, _netif_conf.ipv4)
                     .await
-                    .map_err(|_| ErrorCode::StdIoError)?; // TODO: netif_conf.ipv4
+                    .map_err(|_| ErrorCode::StdIoError)?;
                 socket
                     .join_v6(MDNS_IPV6_BROADCAST_ADDR, _netif_conf.interface)
                     .await
-                    .map_err(|_| ErrorCode::StdIoError)?; // TODO: netif_conf.interface
+                    .map_err(|_| ErrorCode::StdIoError)?;
 
                 let (recv, send) = socket.split();
 
