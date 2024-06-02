@@ -22,14 +22,14 @@ rs-matter-macros = { git = "https://github.com/ivmarkov/rs-matter", branch = "wi
 edge-nal = { git = "https://github.com/ivmarkov/edge-net" }
 #edge-nal = { path = "../edge-net/edge-nal" }
 edge-nal-std = { git = "https://github.com/ivmarkov/edge-net" }
-#edge-nal-std = { path = "../edge-net/edge-nal" }
+#edge-nal-std = { path = "../edge-net/edge-nal-std" }
 
 [features]
 default = []
 zeroconf = ["os", "rs-matter/zeroconf"]
 os = ["backtrace", "rs-matter/os", "rs-matter/mbedtls", "embassy-time/std", "embassy-time/generic-queue"]
 backtrace = ["std", "rs-matter/backtrace"]
-std = ["alloc", "rs-matter/std", "edge-nal-std/async-io"]
+std = ["alloc", "rs-matter/std", "edge-nal-std"]
 alloc = ["embedded-svc/alloc"]
 
 [dependencies]
