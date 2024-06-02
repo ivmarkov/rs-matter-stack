@@ -30,8 +30,8 @@ You need to provide platform-specific implementations of the following traits fo
 - `Persist` - non-volatile storage abstraction. Easiest is to implement `KvBlobStore` instead, and then use it with the provided `KvPersist` utility. 
   - For STD, `rs-matter-stack` provides `DirKvBlobStore`.
 - `Netif` - network interface abstraction (i.e. monitoring when the network interface is up or down, and what is its IP configuration).
-  - For IP (TCP & UDP) IO, the stack uses the [`edge-nal`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal) crate, and is thus compatible with [`STD`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal-std) and [`Embassy`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal-embassy) out of the box.
   - For Unix-like OSes, `rs-matter-stack` provides `UnixNetif`, which uses a simple polling every 2 seconds to detect changes to the network interface.
+  - Note that For IP (TCP & UDP) IO, the stack uses the [`edge-nal`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal) crate, and is thus compatible with [`STD`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal-std) and [`Embassy`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal-embassy) out of the box. You only need to worry about networking IO if you use other platforms than these two.
 - `Modem` (for BLE & Wifi only) - abstraction of the device radio that can operate either in Wifi, or in BLE mode. 
   - `DummyLinuxModem` can be used on Linux to test with BLE. This modem uses Linux BlueZ and the simple `UnixNetif` netif implementation from above, but fakes the Wifi interface with a dummy no-nop one. For production embedded Linux use-cases, you'll have to provide a `Wifi` implementation, possibly based on WPA Supplicant, or NetworkManager.
 
