@@ -219,13 +219,13 @@ impl Wifi for DummyL2 {
 
 /// An instantiation of `DummyModem` for Linux specifically,
 /// that uses the `UnixNetif` instance and the BlueR GATT peripheral from `rs-matter`.
-#[cfg(all(feature = "std", target_os = "linux"))]
+#[cfg(all(feature = "os", feature = "nix", target_os = "linux"))]
 pub type DummyLinuxModem = DummyModem<
     fn() -> crate::netif::UnixNetif,
     fn() -> rs_matter::transport::network::btp::BuiltinGattPeripheral,
 >;
 
-#[cfg(all(feature = "std", target_os = "linux"))]
+#[cfg(all(feature = "os", feature = "nix", target_os = "linux"))]
 impl Default for DummyLinuxModem {
     fn default() -> Self {
         Self::new(crate::netif::UnixNetif::new_default, || {

@@ -47,7 +47,7 @@ edge-nal = "0.2"
 edge-nal-std = { version = "0.2", optional = true }
 
 [target.'cfg(all(unix, not(target_os = "espidf")))'.dependencies]
-nix = { version = "0.27", features = ["net"] }
+nix = { version = "0.27", features = ["net"], optional = true }
 
 [dev-dependencies]
 static_cell = "2.1"
@@ -58,9 +58,9 @@ env_logger = "0.11"
 [[example]]
 name = "light_eth"
 path = "examples/light_eth.rs"
-required-features = ["os"]
+required-features = ["os", "nix"]
 
 [[example]]
 name = "light"
 path = "examples/light.rs"
-required-features = ["os"]
+required-features = ["os", "nix"]
