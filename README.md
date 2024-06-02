@@ -22,20 +22,26 @@ Using `MatterStack<...>` hard-codes the following:
 * _One large future_: The Matter stack is assembled as one large future which is not `Send`. Using an executor to poll that future together with others is still possible, but the executor should be a local one (i.e. Tokio's `LocalSet`, `async_executor::LocalExecutor` and so on).
 * _Allocation strategy_: a number of large-ish buffers are const-allocated inside the `MatterStack` struct. This allows the whole stack to be statically-allocated with `ConstStaticCell` - yet - that would eat up 20 to 60K of your flash size, depending on the selected max number of subscriptions, exchange buffers and so on. A different allocation strategy might be provided in future.
 
-## The example is STD-only, uses `DummyNetif` and `DummyPersist`, and does not support comissioning over BLE?
+## The examples are STD-only?
 
 The core of `rs-matter-stack` is `no_std` and no-`alloc`.
 
-For production use-cases you need to provide implementations of the following platform-specific traits:
-- `Persist` - non-volatile storage abstraction. Easiest is to implement `KvBlobStore` instead, and then use it with the provided `KvPersist` utility. For STD, `rs-matter-stack` provides `DirKvBlobStore`.
-- `Netif` - network interface abstraction (i.e. monitoring when the network interface is up or down, and what is its IP configuration). For IP IO, the stack uses the [`edge-nal`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal) crate, and is thus compatible with [`STD`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal-std) and [`Embassy`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal-embassy).
-- `Modem` (for BLE & Wifi only) - abstraction of the device radio, that can operate either in Wifi, or in BLE mode.
+Yyou need to provide implementations of the following platform-specific traits for your embedded platform:
+- `Persist` - non-volatile storage abstraction. Easiest is to implement `KvBlobStore` instead, and then use it with the provided `KvPersist` utility. 
+  - For STD, `rs-matter-stack` provides `DirKvBlobStore`.
+- `Netif` - network interface abstraction (i.e. monitoring when the network interface is up or down, and what is its IP configuration).
+  - For IP (TCP & UDP) IO, the stack uses the [`edge-nal`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal) crate, and is thus compatible with [`STD`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal-std) and [`Embassy`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal-embassy).
+  - For Unix-like OSes, `rs-matter-stack` provides `UnixNetif`, which uses a simple polling every 2 seconds to detect changes to the network interface.
+- `Modem` (for BLE & Wifi only) - abstraction of the device radio that can operate either in Wifi, or in BLE mode. 
+  - `DummyLinuxModem` can be used on Linux to test with BLE. This modem uses Linux BlueZ and the simple `UnixNetif` netif implementation from above, but fakes the Wifi interface with a dummy no-nop one. For production embedded Linux use-cases, you'll have to provide a `Wifi` implementation, possibly based on WPA Supplicant, or NetworkManager.
 
 ## ESP-IDF
 
 The [`esp-idf-matter`](https://github.com/ivmarkov/esp-idf-matter) crate provides implementations for `Persist`, `Netif` and `Modem` for the ESP-IDF SDK.
 
 ## Example
+
+(See also [All examples](#all-examples))
 
 ```rust
 //! An example utilizing the `EthMatterStack` struct.
@@ -185,4 +191,12 @@ const NODE: Node = Node {
         },
     ],
 };
+```
+
+## All examples
+
+To build all examples, use:
+
+```
+cargo build --examples --features os,nix
 ```
