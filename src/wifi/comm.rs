@@ -4,7 +4,7 @@ use log::{error, info, warn};
 
 use rs_matter::data_model::objects::{
     AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, CmdDataEncoder, CmdDetails, Dataver,
-    Handler,
+    Handler, NonBlockingHandler,
 };
 use rs_matter::data_model::sdm::nw_commissioning::{
     AddWifiNetworkRequest, Attributes, Commands, ConnectNetworkRequest, ConnectNetworkResponse,
@@ -442,6 +442,8 @@ where
         WifiNwCommCluster::invoke(self, exchange, cmd, data, encoder)
     }
 }
+
+impl<'a, const N: usize, M> NonBlockingHandler for WifiNwCommCluster<'a, N, M> where M: RawMutex {}
 
 // impl ChangeNotifier<()> for WifiCommCluster {
 //     fn consume_change(&mut self) -> Option<()> {
