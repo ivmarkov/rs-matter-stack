@@ -166,10 +166,13 @@ mod unix {
     pub struct UnixNetif(String);
 
     impl UnixNetif {
+        /// Create a new `UnixNetif`. The implementation will try
+        /// to find and use a suitable interface automatically.
         pub fn new_default() -> Self {
             Self(default_if().unwrap())
         }
 
+        /// Create a new `UnixNetif` for the given interface name
         pub const fn new(if_name: String) -> Self {
             Self(if_name)
         }

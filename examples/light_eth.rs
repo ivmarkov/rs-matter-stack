@@ -8,11 +8,6 @@
 //! its credentials etc. and can assume it "pre-exists".
 //!
 //! The example implements a fictitious Light device (an On-Off Matter cluster).
-//!
-//! Note that there is no real persistence in this example, so the device will always
-//! start in commissioning mode.
-//! Note also that the network interface is not monitored for connectivity changes,
-//! so the device will always assume it is connected.
 
 use core::borrow::Borrow;
 use core::pin::pin;
@@ -33,7 +28,7 @@ use rs_matter::utils::select::Coalesce;
 use rs_matter::CommissioningData;
 
 use rs_matter_stack::netif::UnixNetif;
-use rs_matter_stack::persist::DummyPersist;
+use rs_matter_stack::persist::{DirKvBlobStore, KvBlobBuf, KvPersist};
 use rs_matter_stack::EthMatterStack;
 
 use static_cell::ConstStaticCell;
@@ -78,8 +73,8 @@ fn main() -> Result<(), Error> {
     // Using `pin!` is completely optional, but saves some memory due to `rustc`
     // not being very intelligent w.r.t. stack usage in async functions
     let mut matter = pin!(stack.run(
-        // Will not persist anything
-        DummyPersist,
+        // Will persist in `<tmp-dir>/rs-matter`
+        KvPersist::new_eth(DirKvBlobStore::new_default(), stack),
         // Will try to find a default network interface
         UnixNetif::default(),
         // Hard-coded for demo purposes
@@ -118,7 +113,7 @@ fn main() -> Result<(), Error> {
 
 /// The Matter stack is allocated statically to avoid
 /// program stack blowups.
-static MATTER_STACK: ConstStaticCell<EthMatterStack<()>> =
+static MATTER_STACK: ConstStaticCell<EthMatterStack<KvBlobBuf<()>>> =
     ConstStaticCell::new(EthMatterStack::new_default(
         &BasicInfoConfig {
             vid: 0xFFF1,
@@ -142,7 +137,7 @@ const LIGHT_ENDPOINT_ID: u16 = 1;
 const NODE: Node = Node {
     id: 0,
     endpoints: &[
-        EthMatterStack::<()>::root_metadata(),
+        EthMatterStack::<KvBlobBuf<()>>::root_metadata(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
             device_type: DEV_TYPE_ON_OFF_LIGHT,

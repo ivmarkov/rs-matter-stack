@@ -6,7 +6,7 @@ use enumset::EnumSet;
 
 use rs_matter::transport::network::btp::GattPeripheral;
 
-use crate::netif::{DummyNetif, Netif, NetifConf};
+use crate::netif::Netif;
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -77,63 +77,43 @@ where
 ///
 /// The "dummy" aspects of this implementation are related to the Wifi network:
 /// - The L2 (Wifi) network is simulated by a dummy network interface that does not actually connect to Wifi networks.
-/// - The L3 (IP) network is simulated by a `DummyNetif` instance that uses a hard-coded `NetifConf` and assumes the
-///   netif is always up
-///
-/// The BLE network is not simulated and is expected to be user-provided, because - without a functioning BLE stack -
-/// the device cannot even be commissioned.
+/// - The L3 (IP) network is not simulated and is expected to be user-provided.
+/// - The BLE network is not simulated and is expected to be user-provided as well,
+///   because - without a functioning BLE stack - the device cannot even be commissioned.
 ///
 /// On Linux, the BlueR-based BLE gatt peripheral can be used.
-pub struct DummyModem<U, F> {
-    netif: DummyNetif<U>,
-    gf: F,
+pub struct DummyModem<N, B> {
+    netif_factory: N,
+    bt_factory: B,
 }
 
-impl<U, F> DummyModem<U, F> {
+impl<N, B> DummyModem<N, B> {
     /// Create a new `DummyModem` with the given configuration, UDP `bind` stack and BLE peripheral factory
-    pub const fn new(conf: Option<NetifConf>, bind: U, gf: F) -> Self {
+    pub const fn new(netif_factory: N, bt_factory: B) -> Self {
         Self {
-            netif: DummyNetif::new(conf, bind),
-            gf,
+            netif_factory,
+            bt_factory,
         }
     }
 }
 
-/// An instantiation of `DummyModem` for Linux specifically,
-/// that uses the `edge-nal-std` stack and the BlueR GATT peripheral from `rs-matter`.
-#[cfg(all(feature = "std", target_os = "linux"))]
-pub type DummyLinuxModem = DummyModem<
-    edge_nal_std::Stack,
-    fn() -> rs_matter::transport::network::btp::BuiltinGattPeripheral,
->;
-
-#[cfg(all(feature = "std", target_os = "linux"))]
-impl Default for DummyLinuxModem {
-    fn default() -> Self {
-        Self::new(
-            Some(NetifConf::default()),
-            edge_nal_std::Stack::new(),
-            || rs_matter::transport::network::btp::BuiltinGattPeripheral::new(None),
-        )
-    }
-}
-
-impl<U, F, G> Modem for DummyModem<U, F>
+impl<N, B, I, G> Modem for DummyModem<N, B>
 where
-    U: UdpBind,
-    F: FnMut() -> G,
+    N: FnMut() -> I,
+    B: FnMut() -> G,
+    I: Netif + UdpBind + 'static,
     G: GattPeripheral,
 {
     type BleDevice<'t> = G where Self: 't;
 
-    type WifiDevice<'t> = DummyWifiDevice<'t, U> where Self: 't;
+    type WifiDevice<'t> = DummyWifiDevice<I> where Self: 't;
 
     async fn ble(&mut self) -> Self::BleDevice<'_> {
-        (self.gf)()
+        (self.bt_factory)()
     }
 
     async fn wifi(&mut self) -> Self::WifiDevice<'_> {
-        DummyWifiDevice(&self.netif)
+        DummyWifiDevice((self.netif_factory)())
     }
 }
 
@@ -143,18 +123,18 @@ where
 /// - The L2 (Wifi) network is simulated by a dummy network interface that does not actually connect to Wifi networks.
 /// - The L3 (IP) network is simulated by a `DummyNetif` instance that uses a hard-coded `NetifConf` and assumes the
 ///   netif is always up
-pub struct DummyWifiDevice<'a, U>(&'a DummyNetif<U>);
+pub struct DummyWifiDevice<N>(N);
 
-impl<'a, U> WifiDevice for DummyWifiDevice<'a, U>
+impl<N> WifiDevice for DummyWifiDevice<N>
 where
-    U: UdpBind,
+    N: Netif + UdpBind,
 {
     type L2<'t> = DummyL2 where Self: 't;
 
-    type L3<'t> = &'t DummyNetif<U> where Self: 't;
+    type L3<'t> = &'t N where Self: 't;
 
     async fn split(&mut self) -> (Self::L2<'_>, Self::L3<'_>) {
-        (DummyL2::new(), self.0)
+        (DummyL2::new(), &self.0)
     }
 }
 
@@ -234,5 +214,22 @@ impl Wifi for DummyL2 {
     #[cfg(feature = "alloc")]
     async fn scan(&mut self) -> Result<alloc::vec::Vec<AccessPointInfo>, Self::Error> {
         Ok(alloc::vec::Vec::new())
+    }
+}
+
+/// An instantiation of `DummyModem` for Linux specifically,
+/// that uses the `UnixNetif` instance and the BlueR GATT peripheral from `rs-matter`.
+#[cfg(all(feature = "std", target_os = "linux"))]
+pub type DummyLinuxModem = DummyModem<
+    fn() -> crate::netif::UnixNetif,
+    fn() -> rs_matter::transport::network::btp::BuiltinGattPeripheral,
+>;
+
+#[cfg(all(feature = "std", target_os = "linux"))]
+impl Default for DummyLinuxModem {
+    fn default() -> Self {
+        Self::new(crate::netif::UnixNetif::new_default, || {
+            rs_matter::transport::network::btp::BuiltinGattPeripheral::new(None)
+        })
     }
 }

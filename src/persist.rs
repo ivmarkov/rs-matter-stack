@@ -9,6 +9,9 @@ use crate::network::{Embedding, Network};
 use crate::wifi::WifiContext;
 use crate::{Eth, MatterStack, WifiBle, MAX_WIFI_NETWORKS};
 
+#[cfg(feature = "std")]
+pub use file::DirKvBlobStore;
+
 /// A persistent storage manager for the Matter stack.
 pub trait Persist {
     /// Reset the persist instance, removing all stored data from the non-volatile storage.
@@ -251,101 +254,123 @@ where
     }
 }
 
-/// An implementation of the `KvBlobStore` trait that stores the BLOBs in a directory.
 #[cfg(feature = "std")]
-pub struct DirKvBlobStore(std::path::PathBuf);
+mod file {
+    use rs_matter::error::Error;
 
-#[cfg(feature = "std")]
-impl DirKvBlobStore {
-    /// Create a new `DirKvStore` instance.
-    pub const fn new(path: std::path::PathBuf) -> Self {
-        Self(path)
-    }
+    use super::KvBlobStore;
 
-    /// Load a BLOB with the specified key from the directory.
-    pub fn load<'b>(&self, key: &str, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
-        use log::info;
-        use std::io::Read;
+    extern crate std;
 
-        let path = self.key_path(key);
+    /// An implementation of the `KvBlobStore` trait that stores the BLOBs in a directory.
+    pub struct DirKvBlobStore(std::path::PathBuf);
 
-        match std::fs::File::open(path) {
-            Ok(mut file) => {
-                let mut offset = 0;
+    impl DirKvBlobStore {
+        /// Create a new `DirKvStore` instance, which will persist
+        /// its settings in `<tmp-dir>/rs-matter`.
+        pub fn new_default() -> Self {
+            Self(std::env::temp_dir().join("rs-matter"))
+        }
 
-                loop {
-                    if offset == buf.len() {
-                        Err(rs_matter::error::ErrorCode::NoSpace)?;
+        /// Create a new `DirKvStore` instance.
+        pub const fn new(path: std::path::PathBuf) -> Self {
+            Self(path)
+        }
+
+        /// Load a BLOB with the specified key from the directory.
+        pub fn load<'b>(&self, key: &str, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
+            use log::info;
+            use std::io::Read;
+
+            let path = self.key_path(key);
+
+            match std::fs::File::open(path) {
+                Ok(mut file) => {
+                    let mut offset = 0;
+
+                    loop {
+                        if offset == buf.len() {
+                            Err(rs_matter::error::ErrorCode::NoSpace)?;
+                        }
+
+                        let len = file.read(&mut buf[offset..])?;
+
+                        if len == 0 {
+                            break;
+                        }
+
+                        offset += len;
                     }
 
-                    let len = file.read(&mut buf[offset..])?;
+                    let data = &buf[..offset];
 
-                    if len == 0 {
-                        break;
-                    }
+                    info!("Key {}: loaded {} bytes {:?}", key, data.len(), data);
 
-                    offset += len;
+                    Ok(Some(data))
                 }
-
-                let data = &buf[..offset];
-
-                info!("Key {}: loaded {} bytes {:?}", key, data.len(), data);
-
-                Ok(Some(data))
+                Err(_) => Ok(None),
             }
-            Err(_) => Ok(None),
+        }
+
+        /// Store a BLOB with the specified key in the directory.
+        fn store(&self, key: &str, data: &[u8]) -> Result<(), Error> {
+            use log::info;
+            use std::io::Write;
+
+            std::fs::create_dir_all(&self.0)?;
+
+            let path = self.key_path(key);
+
+            let mut file = std::fs::File::create(path)?;
+
+            file.write_all(data)?;
+
+            info!("Key {}: stored {} bytes {:?}", key, data.len(), data);
+
+            Ok(())
+        }
+
+        /// Remove a BLOB with the specified key from the directory.
+        /// If the BLOB does not exist, this method does nothing.
+        fn remove(&self, key: &str) -> Result<(), Error> {
+            use log::info;
+
+            let path = self.key_path(key);
+
+            if std::fs::remove_file(path).is_ok() {
+                info!("Key {}: removed", key);
+            }
+
+            Ok(())
+        }
+
+        fn key_path(&self, key: &str) -> std::path::PathBuf {
+            self.0.join(key)
         }
     }
 
-    /// Store a BLOB with the specified key in the directory.
-    fn store(&self, key: &str, data: &[u8]) -> Result<(), Error> {
-        use log::info;
-        use std::io::Write;
-
-        std::fs::create_dir_all(&self.0)?;
-
-        let path = self.key_path(key);
-
-        let mut file = std::fs::File::create(path)?;
-
-        file.write_all(data)?;
-
-        info!("Key {}: stored {} bytes {:?}", key, data.len(), data);
-
-        Ok(())
+    impl Default for DirKvBlobStore {
+        fn default() -> Self {
+            Self::new_default()
+        }
     }
 
-    /// Remove a BLOB with the specified key from the directory.
-    /// If the BLOB does not exist, this method does nothing.
-    fn remove(&self, key: &str) -> Result<(), Error> {
-        use log::info;
-
-        let path = self.key_path(key);
-
-        if std::fs::remove_file(path).is_ok() {
-            info!("Key {}: removed", key);
+    impl KvBlobStore for DirKvBlobStore {
+        async fn load<'a>(
+            &mut self,
+            key: &str,
+            buf: &'a mut [u8],
+        ) -> Result<Option<&'a [u8]>, Error> {
+            DirKvBlobStore::load(self, key, buf)
         }
 
-        Ok(())
-    }
+        async fn store(&mut self, key: &str, value: &[u8]) -> Result<(), Error> {
+            DirKvBlobStore::store(self, key, value)
+        }
 
-    fn key_path(&self, key: &str) -> std::path::PathBuf {
-        self.0.join(key)
-    }
-}
-
-#[cfg(feature = "std")]
-impl KvBlobStore for DirKvBlobStore {
-    async fn load<'a>(&mut self, key: &str, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
-        DirKvBlobStore::load(self, key, buf)
-    }
-
-    async fn store(&mut self, key: &str, value: &[u8]) -> Result<(), Error> {
-        DirKvBlobStore::store(self, key, value)
-    }
-
-    async fn remove(&mut self, key: &str) -> Result<(), Error> {
-        DirKvBlobStore::remove(self, key)
+        async fn remove(&mut self, key: &str) -> Result<(), Error> {
+            DirKvBlobStore::remove(self, key)
+        }
     }
 }
 
