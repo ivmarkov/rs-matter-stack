@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        features: ['std', 'os', 'zeroconf', 'async-io-mini']
+        features: ['std', 'os', 'zeroconf']
 
     steps:
       - name: Rust

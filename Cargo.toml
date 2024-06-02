@@ -13,9 +13,6 @@ readme = "README.md"
 #documentation = "https://docs.esp-rs.org/rs-matter-stack/"
 rust-version = "1.77"
 
-#[patch.'https://github.com/ivmarkov/async-io-mini']
-#async-io-mini = { path = "../async-io-mini" }
-
 [patch.crates-io]
 embedded-svc = { git = "https://github.com/esp-rs/embedded-svc" }
 rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "wifi" }
@@ -32,7 +29,6 @@ default = []
 zeroconf = ["os", "rs-matter/zeroconf"]
 os = ["backtrace", "rs-matter/os", "embassy-time/std", "embassy-time/generic-queue"]
 backtrace = ["std", "rs-matter/backtrace"]
-async-io-mini = ["std", "edge-nal-std/async-io-mini"]
 std = ["alloc", "rs-matter/std", "edge-nal-std/async-io"]
 alloc = ["embedded-svc/alloc"]
 
