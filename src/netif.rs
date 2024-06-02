@@ -4,6 +4,9 @@ use core::net::{Ipv4Addr, Ipv6Addr};
 use edge_nal::UdpBind;
 use rs_matter::error::Error;
 
+#[cfg(all(unix, feature = "std"))]
+pub use unix::UnixNetif;
+
 /// Async trait for accessing the network interface (netif) of a driver.
 ///
 /// Allows sharing the network interface between multiple tasks, where one task
@@ -141,5 +144,140 @@ where
 
     async fn bind(&self, addr: core::net::SocketAddr) -> Result<Self::Socket<'_>, Self::Error> {
         self.bind.bind(addr).await
+    }
+}
+
+//#[cfg(all(unix, feature = "std"))]
+mod unix {
+    use alloc::string::String;
+
+    use embassy_time::{Duration, Timer};
+    use nix::{
+        net::if_::InterfaceFlags,
+        sys::socket::{SockaddrIn6, SockaddrStorage},
+    };
+
+    use super::{Netif, NetifConf};
+
+    /// UnixNetif works on any Unix-like OS
+    ///
+    /// It is a simple implementation of the `Netif` trait that uses polling instead of actual notifications
+    /// to detect changes in the network interface configuration.
+    pub struct UnixNetif(String);
+
+    impl UnixNetif {
+        pub fn new_default() -> Self {
+            Self(default_if().unwrap())
+        }
+
+        pub const fn new(if_name: String) -> Self {
+            Self(if_name)
+        }
+
+        pub fn get_conf(&self) -> Option<NetifConf> {
+            get_if_conf(&self.0)
+        }
+    }
+
+    impl Default for UnixNetif {
+        fn default() -> Self {
+            Self::new_default()
+        }
+    }
+
+    impl Netif for UnixNetif {
+        async fn get_conf(&self) -> Result<Option<NetifConf>, rs_matter::error::Error> {
+            Ok(UnixNetif::get_conf(self))
+        }
+
+        async fn wait_conf_change(&self) -> Result<(), rs_matter::error::Error> {
+            // Just poll every two seconds
+            Timer::after(Duration::from_secs(2)).await;
+
+            Ok(())
+        }
+    }
+
+    impl edge_nal::UdpBind for UnixNetif {
+        type Error = std::io::Error;
+
+        type Socket<'a> = edge_nal_std::UdpSocket where Self: 'a;
+
+        async fn bind(&self, addr: core::net::SocketAddr) -> Result<Self::Socket<'_>, Self::Error> {
+            edge_nal_std::Stack::new().bind(addr).await
+        }
+    }
+
+    fn default_if() -> Option<String> {
+        // A quick and dirty way to get a network interface that has a link-local IPv6 address assigned as well as a non-loopback IPv4
+        // Most likely, this is the interface we need
+        // (as opposed to all the docker and libvirt interfaces that might be assigned on the machine and which seem by default to be IPv4 only)
+        nix::ifaddrs::getifaddrs()
+            .unwrap()
+            .filter(|ia| {
+                // Only take interfaces which are up, which are not PTP or loopback
+                // and which have IPv4 IP assigned
+                ia.flags
+                    .contains(InterfaceFlags::IFF_UP | InterfaceFlags::IFF_BROADCAST)
+                    && !ia
+                        .flags
+                        .intersects(InterfaceFlags::IFF_LOOPBACK | InterfaceFlags::IFF_POINTOPOINT)
+                    && ia
+                        .address
+                        .and_then(|addr| addr.as_sockaddr_in().map(|_| ()))
+                        .is_some()
+            })
+            .map(|ia| ia.interface_name)
+            .find(|ifname| {
+                // Only take interfaces which have an IPv4 address
+                nix::ifaddrs::getifaddrs()
+                    .unwrap()
+                    .filter(|ia2| &ia2.interface_name == ifname)
+                    .any(|ia2| {
+                        ia2.address
+                            .and_then(|addr| addr.as_sockaddr_in6().map(SockaddrIn6::ip))
+                            .filter(|ip| ip.octets()[..2] == [0xfe, 0x80])
+                            .is_some()
+                    })
+            })
+    }
+
+    fn get_if_conf(if_name: &str) -> Option<NetifConf> {
+        extract_if_conf(
+            nix::ifaddrs::getifaddrs()
+                .unwrap()
+                .filter(|ia| ia.interface_name == if_name)
+                .filter_map(|ia| ia.address),
+        )
+    }
+
+    fn extract_if_conf(addrs: impl Iterator<Item = SockaddrStorage>) -> Option<NetifConf> {
+        let mut ipv4 = None;
+        let mut ipv6 = None;
+        let mut interface = None;
+        let mut mac = None;
+
+        for addr in addrs {
+            if let Some(addr_ipv4) = addr.as_sockaddr_in() {
+                ipv4 = Some(addr_ipv4.ip().into());
+            } else if let Some(addr_ipv6) = addr.as_sockaddr_in6() {
+                ipv6 = Some(addr_ipv6.ip());
+            } else if let Some(addr_link) = addr.as_link_addr() {
+                if mac.is_none() {
+                    mac = addr_link.addr();
+                }
+
+                if interface.is_none() {
+                    interface = Some(addr_link.ifindex() as _);
+                }
+            }
+        }
+
+        Some(NetifConf {
+            ipv4: ipv4?,
+            ipv6: ipv6?,
+            interface: interface?,
+            mac: mac?,
+        })
     }
 }

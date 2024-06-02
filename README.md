@@ -72,7 +72,7 @@ use rs_matter::secure_channel::spake2p::VerifierData;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::CommissioningData;
 
-use rs_matter_stack::netif::DummyNetif;
+use rs_matter_stack::netif::UnixNetif;
 use rs_matter_stack::persist::DummyPersist;
 use rs_matter_stack::EthMatterStack;
 
@@ -82,6 +82,10 @@ use static_cell::ConstStaticCell;
 mod dev_att;
 
 fn main() -> Result<(), Error> {
+    env_logger::init_from_env(
+        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
+    );
+
     info!("Starting...");
 
     // Take the Matter stack (can be done only once),
@@ -116,8 +120,8 @@ fn main() -> Result<(), Error> {
     let mut matter = pin!(stack.run(
         // Will not persist anything
         DummyPersist,
-        // Will use the default network interface and will assume it is always up
-        DummyNetif::default(),
+        // Will try to find a default network interface
+        UnixNetif::default(),
         // Hard-coded for demo purposes
         CommissioningData {
             verifier: VerifierData::new_with_pw(123456, *stack.matter().borrow()),
