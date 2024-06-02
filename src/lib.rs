@@ -385,9 +385,7 @@ where
             {
                 use core::fmt::Write as _;
 
-                use core::net::IpAddr;
-
-                use edge_nal::Multicast;
+                use {edge_nal::MulticastV4, edge_nal::MulticastV6};
 
                 use rs_matter::mdns::{
                     Host, MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_PORT,
@@ -404,11 +402,11 @@ where
                     .map_err(|_| ErrorCode::StdIoError)?;
 
                 socket
-                    .join(IpAddr::V4(MDNS_IPV4_BROADCAST_ADDR))
+                    .join_v4(MDNS_IPV4_BROADCAST_ADDR, _netif_conf.ipv4)
                     .await
                     .map_err(|_| ErrorCode::StdIoError)?; // TODO: netif_conf.ipv4
                 socket
-                    .join(IpAddr::V6(MDNS_IPV6_BROADCAST_ADDR))
+                    .join_v6(MDNS_IPV6_BROADCAST_ADDR, _netif_conf.interface)
                     .await
                     .map_err(|_| ErrorCode::StdIoError)?; // TODO: netif_conf.interface
 
