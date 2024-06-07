@@ -10,15 +10,12 @@ description = "Utility for configuring and running rs-matter"
 repository = "https://github.com/ivmarkov/rs-matter-stack"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-#documentation = "https://docs.esp-rs.org/rs-matter-stack/"
 rust-version = "1.77"
 
 [patch.crates-io]
 embedded-svc = { git = "https://github.com/esp-rs/embedded-svc" }
 rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "wifi" }
-rs-matter-macros = { git = "https://github.com/ivmarkov/rs-matter", branch = "wifi" }
 #rs-matter = { path = "../rs-matter/rs-matter" }
-#rs-matter-macros = { path = "../rs-matter/rs-matter-macros" }
 edge-nal = { git = "https://github.com/ivmarkov/edge-net" }
 #edge-nal = { path = "../edge-net/edge-nal" }
 edge-nal-std = { git = "https://github.com/ivmarkov/edge-net" }
@@ -42,7 +39,6 @@ embassy-sync = "0.5"
 embassy-time = "0.3"
 embedded-svc = { version = "0.27", default-features = false }
 rs-matter = { version = "0.1", default-features = false }
-rs-matter-macros = "0.1"
 edge-nal = "0.2"
 edge-nal-std = { version = "0.2", optional = true }
 
