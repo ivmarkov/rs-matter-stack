@@ -1,5 +1,4 @@
 use core::borrow::Borrow;
-use core::cell::RefCell;
 use core::pin::pin;
 
 use edge_nal::UdpBind;
@@ -14,7 +13,6 @@ use log::info;
 use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Endpoint, HandlerCompat};
 use rs_matter::data_model::root_endpoint;
 use rs_matter::data_model::root_endpoint::{handler, OperNwType, RootEndpointHandler};
-use rs_matter::data_model::sdm::failsafe::FailSafe;
 use rs_matter::data_model::sdm::wifi_nw_diagnostics;
 use rs_matter::data_model::sdm::wifi_nw_diagnostics::{
     WiFiSecurity, WiFiVersion, WifiNwDiagCluster, WifiNwDiagData,
@@ -246,11 +244,6 @@ where
                     .coalesce()
                     .await?;
             }
-
-            // As per spec, we need to indicate the expectation of a re-arm with a CASE session
-            // even if the current session is a PASE one (this is specific for non-concurrent commissiioning flows)
-            let failsafe: &RefCell<FailSafe> = self.matter().borrow();
-            failsafe.borrow_mut().expect_case_rearm()?;
 
             let mut wifi = modem.wifi().await;
 
