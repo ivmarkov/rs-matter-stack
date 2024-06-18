@@ -1,4 +1,6 @@
 use core::borrow::Borrow;
+use core::future::Future;
+use core::pin::pin;
 
 use edge_nal::UdpBind;
 
@@ -79,25 +81,37 @@ where
     }
 
     /// Run the Matter stack for Ethernet network.
-    pub async fn run<'d, H, P, I>(
+    ///
+    /// Parameters:
+    /// - `persist` - a user-provided `Persist` implementation
+    /// - `netif` - a user-provided `Netif` implementation
+    /// - `dev_comm` - the commissioning data
+    /// - `handler` - a user-provided DM handler implementation
+    /// - `user` - a user-provided future that will be polled only when the netif interface is up
+    pub async fn run<'d, H, P, I, U>(
         &self,
         persist: P,
         netif: I,
         dev_comm: CommissioningData,
         handler: H,
+        user: U,
     ) -> Result<(), Error>
     where
         H: AsyncHandler + AsyncMetadata,
         P: Persist,
         I: Netif + UdpBind,
+        U: Future<Output = Result<(), Error>>,
     {
         info!("Matter Stack memory: {}B", core::mem::size_of_val(self));
+
+        let mut user = pin!(user);
 
         self.run_with_netif(
             persist,
             netif,
             Some((dev_comm, DiscoveryCapabilities::new(true, false, false))),
             handler,
+            &mut user,
         )
         .await
     }

@@ -8,12 +8,13 @@
 #![warn(clippy::large_stack_frames)]
 #![warn(clippy::large_types_passed_by_value)]
 
+use core::future::Future;
 use core::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 use core::pin::pin;
 
 use edge_nal::{UdpBind, UdpSplit};
 
-use embassy_futures::select::select3;
+use embassy_futures::select::{select3, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use log::info;
@@ -52,6 +53,8 @@ extern crate std;
 extern crate alloc;
 
 mod eth;
+#[cfg(feature = "edge-mdns")]
+pub mod mdns;
 pub mod modem;
 pub mod netif;
 pub mod network;
@@ -159,6 +162,31 @@ where
         }
     }
 
+    /// A utility method to replace the initial mDNS implementation with another one.
+    ///
+    /// Useful in particular with `MdnsType::Provided()`, where the user would still like
+    /// to create the `MatterStack` instance in a const-context, as in e.g.:
+    /// `const Stack: MatterStack<'static, ...> = MatterStack::new(...);`
+    ///
+    /// The above const-creation is incompatible with `MdnsType::Provided()` which carries a
+    /// `&dyn Mdns` pointer, which cannot be initialized from within a const context with anything
+    /// else than a `const`. (At least not yet - there is an unstable nightly Rust feature for that).
+    ///
+    /// The solution is to const-construct the `MatterStack` object with `MdnsType::Disabled`, and
+    /// after that - while/if we still have exclusive, mutable access to the `MatterStack` object -
+    /// replace the `MdnsType::Disabled` initial impl with another, like `MdnsType::Provided`.
+    pub fn replace_mdns(&mut self, mdns: MdnsType<'a>) {
+        self.mdns = mdns;
+        self.matter.replace_mdns(mdns.mdns_service());
+    }
+
+    /// A utility method to replace the initial Device Attestation Data Fetcher with another one.
+    ///
+    /// Reasoning and use-cases explained in the documentation of `replace_mdns`.
+    pub fn replace_dev_att(&mut self, dev_att: &'a dyn DevAttDataFetcher) {
+        self.matter.replace_dev_att(dev_att);
+    }
+
     /// Get a reference to the `Matter` instance.
     pub const fn matter(&self) -> &Matter<'a> {
         &self.matter
@@ -212,18 +240,29 @@ where
     ///
     /// The netif instance is necessary, so that the loop can monitor the network and bring up/down
     /// the main UDP transport and the mDNS service when the netif goes up/down or changes its IP addresses.
-    pub async fn run_with_netif<'d, H, P, I>(
+    ///
+    /// Parameters:
+    /// - `persist` - a user-provided `Persist` implementation
+    /// - `netif` - a user-provided `Netif` implementation
+    /// - `dev_comm` - the commissioning data and discovery capabilities
+    /// - `handler` - a user-provided DM handler implementation
+    /// - `user` - a user-provided future that will be polled only when the netif interface is up
+    pub async fn run_with_netif<'d, H, P, I, U>(
         &self,
         mut persist: P,
         netif: I,
         dev_comm: Option<(CommissioningData, DiscoveryCapabilities)>,
         handler: H,
+        user: U,
     ) -> Result<(), Error>
     where
         H: AsyncHandler + AsyncMetadata,
         P: Persist,
         I: Netif + UdpBind,
+        U: Future<Output = Result<(), Error>>,
     {
+        let mut user = pin!(user);
+
         loop {
             info!("Waiting for the network to come up...");
 
@@ -293,7 +332,9 @@ where
                 Ok(())
             });
 
-            select3(&mut main, &mut mdns, &mut down).coalesce().await?;
+            select4(&mut main, &mut mdns, &mut down, &mut user)
+                .coalesce()
+                .await?;
 
             info!("Network change detected");
         }
