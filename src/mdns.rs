@@ -25,9 +25,32 @@ use embassy_sync::signal::Signal;
 use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::mdns::{Mdns, ServiceMode};
+use rs_matter::utils::buf::BufferAccess;
 
 const MAX_MATTER_SERVICES: usize = 4;
 const MAX_MATTER_SERVICE_NAME_LEN: usize = 40;
+
+/// An adaptor from `rs-matter` buffers to `edge-mdns` buffers.
+pub struct MatterBuffer<B>(B);
+
+impl<B> MatterBuffer<B> {
+    /// Create a new instance of `MatterBuffer`
+    pub const fn new(buffer: B) -> Self {
+        Self(buffer)
+    }
+}
+
+impl<B, T> edge_mdns::buf::BufferAccess<T> for MatterBuffer<B>
+where
+    B: BufferAccess<T>,
+    T: ?Sized,
+{
+    type Buffer<'a> = B::Buffer<'a> where Self: 'a;
+
+    async fn get(&self) -> Option<Self::Buffer<'_>> {
+        self.0.get().await
+    }
+}
 
 /// An adaptor struct that does two things:
 /// - Implements the `rs-matter` `Mdns` trait and thus can be used as an mDNS implementation
