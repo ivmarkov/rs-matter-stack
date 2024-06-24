@@ -13,7 +13,6 @@ readme = "README.md"
 rust-version = "1.77"
 
 [patch.crates-io]
-embedded-svc = { git = "https://github.com/esp-rs/embedded-svc" }
 rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "wifi" }
 #rs-matter = { path = "../rs-matter/rs-matter" }
 edge-nal = { git = "https://github.com/ivmarkov/edge-net" }
@@ -35,9 +34,9 @@ heapless = "0.8"
 enumset = { version = "1", default-features = false }
 scopeguard = { version = "1", default-features = false }
 embassy-futures = "0.1"
-embassy-sync = "0.5"
+embassy-sync = "0.6"
 embassy-time = "0.3"
-embedded-svc = { version = "0.27", default-features = false }
+embedded-svc = { version = "0.28", default-features = false }
 rs-matter = { version = "0.1", default-features = false }
 edge-nal = "0.2"
 edge-nal-std = { version = "0.2", optional = true }
