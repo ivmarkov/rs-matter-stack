@@ -16,7 +16,6 @@ use rs_matter::interaction_model::core::IMStatusCode;
 use rs_matter::interaction_model::messages::ib::Status;
 use rs_matter::tlv::{FromTLV, OctetStr, TLVElement, TagType, ToTLV};
 use rs_matter::transport::exchange::Exchange;
-use rs_matter::utils::rand::Rand;
 
 use super::{WifiContext, WifiCredentials};
 
@@ -37,18 +36,16 @@ where
     M: RawMutex,
 {
     /// Create a new instance.
-    pub fn new(rand: Rand, networks: &'a WifiContext<N, M>) -> Self {
-        Self {
-            data_ver: Dataver::new(rand),
-            networks,
-        }
+    pub const fn new(data_ver: Dataver, networks: &'a WifiContext<N, M>) -> Self {
+        Self { data_ver, networks }
     }
 
     /// Read an attribute.
     pub fn read(
         &self,
-        attr: &AttrDetails<'_>,
-        encoder: AttrDataEncoder<'_, '_, '_>,
+        _exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
     ) -> Result<(), Error> {
         if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
@@ -120,10 +117,10 @@ where
     /// Invoke a command.
     pub fn invoke(
         &self,
-        exchange: &Exchange<'_>,
-        cmd: &CmdDetails<'_>,
-        data: &TLVElement<'_>,
-        encoder: CmdDataEncoder<'_, '_, '_>,
+        exchange: &Exchange,
+        cmd: &CmdDetails,
+        data: &TLVElement,
+        encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         match cmd.cmd_id.try_into()? {
             Commands::ScanNetworks => {
@@ -428,8 +425,13 @@ impl<'a, const N: usize, M> Handler for WifiNwCommCluster<'a, N, M>
 where
     M: RawMutex,
 {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
-        WifiNwCommCluster::read(self, attr, encoder)
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
+        WifiNwCommCluster::read(self, exchange, attr, encoder)
     }
 
     fn invoke(

@@ -1,4 +1,3 @@
-use core::borrow::Borrow;
 use core::future::Future;
 use core::pin::pin;
 
@@ -6,7 +5,9 @@ use edge_nal::UdpBind;
 
 use log::info;
 
-use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Endpoint, HandlerCompat};
+use rs_matter::data_model::objects::{
+    AsyncHandler, AsyncMetadata, Dataver, Endpoint, HandlerCompat,
+};
 use rs_matter::data_model::root_endpoint;
 use rs_matter::data_model::root_endpoint::{handler, OperNwType, RootEndpointHandler};
 use rs_matter::data_model::sdm::ethernet_nw_diagnostics::EthNwDiagCluster;
@@ -64,11 +65,15 @@ where
     pub fn root_handler(&self) -> EthRootEndpointHandler<'_> {
         handler(
             0,
-            self.matter(),
-            HandlerCompat(EthNwCommCluster::new(*self.matter().borrow())),
+            HandlerCompat(EthNwCommCluster::new(Dataver::new_rand(
+                self.matter().rand(),
+            ))),
             ethernet_nw_diagnostics::ID,
-            HandlerCompat(EthNwDiagCluster::new(*self.matter().borrow())),
+            HandlerCompat(EthNwDiagCluster::new(Dataver::new_rand(
+                self.matter().rand(),
+            ))),
             true,
+            self.matter().rand(),
         )
     }
 

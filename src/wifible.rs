@@ -1,4 +1,3 @@
-use core::borrow::Borrow;
 use core::future::Future;
 use core::pin::pin;
 
@@ -11,7 +10,9 @@ use embedded_svc::wifi::asynch::Wifi;
 
 use log::info;
 
-use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Endpoint, HandlerCompat};
+use rs_matter::data_model::objects::{
+    AsyncHandler, AsyncMetadata, Dataver, Endpoint, HandlerCompat,
+};
 use rs_matter::data_model::root_endpoint;
 use rs_matter::data_model::root_endpoint::{handler, OperNwType, RootEndpointHandler};
 use rs_matter::data_model::sdm::wifi_nw_diagnostics;
@@ -95,14 +96,13 @@ where
     pub fn root_handler(&self) -> WifiBleRootEndpointHandler<'_, M> {
         handler(
             0,
-            self.matter(),
             HandlerCompat(comm::WifiNwCommCluster::new(
-                *self.matter().borrow(),
+                Dataver::new_rand(self.matter().rand()),
                 &self.network.wifi_context,
             )),
             wifi_nw_diagnostics::ID,
             HandlerCompat(WifiNwDiagCluster::new(
-                *self.matter().borrow(),
+                Dataver::new_rand(self.matter().rand()),
                 // TODO: Update with actual information
                 WifiNwDiagData {
                     bssid: [0; 6],
@@ -113,6 +113,7 @@ where
                 },
             )),
             false,
+            self.matter().rand(),
         )
     }
 
