@@ -1,4 +1,5 @@
 use core::borrow::Borrow;
+use core::future::Future;
 use core::pin::pin;
 
 use edge_nal::UdpBind;
@@ -143,24 +144,36 @@ where
     /// It is just a composition of the `MatterStack::run_with_netif` method, and the `WifiManager::run` method,
     /// where the former takes care of running the main Matter loop, while the latter takes care of ensuring
     /// that the Matter instance stays connected to the Wifi network.
-    pub async fn operate<H, P, W, I>(
+    ///
+    /// Parameters:
+    /// - `persist` - a user-provided `Persist` implementation
+    /// - `wifi` - a user-provided `Wifi` implementation
+    /// - `netif` - a user-provided `Netif` implementation
+    /// - `dev_comm` - the commissioning data and discovery capabilities
+    /// - `handler` - a user-provided DM handler implementation
+    /// - `user` - a user-provided future that will be polled only when the netif interface is up
+    pub async fn operate<H, P, W, I, U>(
         &self,
         persist: P,
         wifi: W,
         netif: I,
         handler: H,
+        user: U,
     ) -> Result<(), Error>
     where
         H: AsyncHandler + AsyncMetadata,
         P: Persist,
         W: Wifi,
         I: Netif + UdpBind,
+        U: Future<Output = Result<(), Error>>,
     {
         info!("Running Matter in operating mode (Wifi)");
 
+        let mut user = pin!(user);
+
         let mut mgr = WifiManager::new(wifi, &self.network.wifi_context);
 
-        let mut main = pin!(self.run_with_netif(persist, netif, None, handler));
+        let mut main = pin!(self.run_with_netif(persist, netif, None, handler, &mut user));
         let mut wifi = pin!(mgr.run());
 
         select(&mut wifi, &mut main).coalesce().await
@@ -171,6 +184,12 @@ where
     ///
     /// Note: make sure to call `MatterStack::reset` before calling this method, as all fabrics and ACLs, as well as all
     /// transport state should be reset.
+    ///
+    /// Parameters:
+    /// - `persist` - a user-provided `Persist` implementation
+    /// - `gatt` - a user-provided `GattPeripheral` implementation
+    /// - `dev_comm` - the commissioning data
+    /// - `handler` - a user-provided DM handler implementation
     pub async fn commission<'d, H, P, G>(
         &'static self,
         persist: P,
@@ -210,19 +229,30 @@ where
     /// An all-in-one "run everything" method that automatically
     /// places the Matter stack either in Commissioning or in Operating mode, depending
     /// on the state of the device as persisted in the NVS storage.
-    pub async fn run<'d, P, O, H>(
+    ///
+    /// Parameters:
+    /// - `persist` - a user-provided `Persist` implementation
+    /// - `modem` - a user-provided `Modem` implementation
+    /// - `dev_comm` - the commissioning data
+    /// - `handler` - a user-provided DM handler implementation
+    /// - `user` - a user-provided future that will be polled only when the netif interface is up
+    pub async fn run<'d, P, O, H, U>(
         &'static self,
         mut persist: P,
         mut modem: O,
         dev_comm: CommissioningData,
         handler: H,
+        user: U,
     ) -> Result<(), Error>
     where
         P: Persist,
         O: Modem,
         H: AsyncHandler + AsyncMetadata,
+        U: Future<Output = Result<(), Error>>,
     {
         info!("Matter Stack memory: {}B", core::mem::size_of_val(self));
+
+        let mut user = pin!(user);
 
         loop {
             if !self.is_commissioned().await? {
@@ -251,7 +281,8 @@ where
 
             info!("Wifi driver initialized");
 
-            self.operate(&mut persist, wifi, netif, &handler).await?;
+            self.operate(&mut persist, wifi, netif, &handler, &mut user)
+                .await?;
         }
     }
 }

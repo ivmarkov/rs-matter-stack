@@ -15,10 +15,12 @@ rust-version = "1.77"
 [patch.crates-io]
 rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "wifi" }
 #rs-matter = { path = "../rs-matter/rs-matter" }
-edge-nal = { git = "https://github.com/ivmarkov/edge-net" }
+edge-nal = { git = "https://github.com/ivmarkov/edge-net", branch = "mdns" }
 #edge-nal = { path = "../edge-net/edge-nal" }
-edge-nal-std = { git = "https://github.com/ivmarkov/edge-net" }
+edge-nal-std = { git = "https://github.com/ivmarkov/edge-net", branch = "mdns" }
 #edge-nal-std = { path = "../edge-net/edge-nal-std" }
+edge-mdns = { git = "https://github.com/ivmarkov/edge-net", branch = "mdns" }
+#edge-mdns = { path = "../edge-net/edge-mdns" }
 
 [features]
 default = []
@@ -40,6 +42,7 @@ embedded-svc = { version = "0.28", default-features = false }
 rs-matter = { version = "0.1", default-features = false }
 edge-nal = "0.2"
 edge-nal-std = { version = "0.2", optional = true }
+edge-mdns = { version = "0.2", optional = true }
 
 [target.'cfg(all(unix, not(target_os = "espidf")))'.dependencies]
 nix = { version = "0.27", features = ["net"], optional = true }
