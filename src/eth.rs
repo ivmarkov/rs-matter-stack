@@ -15,6 +15,7 @@ use rs_matter::data_model::sdm::nw_commissioning::EthNwCommCluster;
 use rs_matter::data_model::sdm::{ethernet_nw_diagnostics, nw_commissioning};
 use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
+use rs_matter::utils::init::{init, Init};
 use rs_matter::CommissioningData;
 
 use crate::netif::Netif;
@@ -32,18 +33,26 @@ use crate::MatterStack;
 ///
 /// The expectation is nevertheless that for production use-cases
 /// the `Eth` network would really only be used for Ethernet.
-pub struct Eth<E = ()>(E);
+pub struct Eth<E = ()> {
+    embedding: E,
+}
 
 impl<E> Network for Eth<E>
 where
     E: Embedding + 'static,
 {
-    const INIT: Self = Self(E::INIT);
+    const INIT: Self = Self { embedding: E::INIT };
 
     type Embedding = E;
 
     fn embedding(&self) -> &Self::Embedding {
-        &self.0
+        &self.embedding
+    }
+
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            embedding <- E::init(),
+        })
     }
 }
 

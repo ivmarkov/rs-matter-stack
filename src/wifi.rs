@@ -1,6 +1,4 @@
-use core::cell::RefCell;
-
-use embassy_sync::blocking_mutex::{self, raw::RawMutex};
+use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::{Duration, Timer};
 
 use log::{info, warn};
@@ -8,7 +6,10 @@ use log::{info, warn};
 use rs_matter::data_model::sdm::nw_commissioning::NetworkCommissioningStatus;
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::tlv::{self, FromTLV, TLVList, TLVWriter, TagType, ToTLV};
+use rs_matter::utils::blmutex;
+use rs_matter::utils::init::{init, Init};
 use rs_matter::utils::notification::Notification;
+use rs_matter::utils::refcell::RefCell;
 use rs_matter::utils::writebuf::WriteBuf;
 
 pub mod comm;
@@ -27,7 +28,7 @@ struct WifiStatus {
 }
 
 struct WifiState<const N: usize> {
-    networks: heapless::Vec<WifiCredentials, N>,
+    networks: rs_matter::utils::vec::Vec<WifiCredentials, N>,
     connected_once: bool,
     connect_requested: Option<heapless::String<32>>,
     status: Option<WifiStatus>,
@@ -35,6 +36,26 @@ struct WifiState<const N: usize> {
 }
 
 impl<const N: usize> WifiState<N> {
+    const fn new() -> Self {
+        Self {
+            networks: rs_matter::utils::vec::Vec::new(),
+            connected_once: false,
+            connect_requested: None,
+            status: None,
+            changed: false,
+        }
+    }
+
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            networks <- rs_matter::utils::vec::Vec::init(),
+            connected_once: false,
+            connect_requested: None,
+            status: None,
+            changed: false,
+        })
+    }
+
     pub(crate) fn get_next_network(&mut self, last_ssid: Option<&str>) -> Option<WifiCredentials> {
         // Return the requested network with priority
         if let Some(ssid) = self.connect_requested.take() {
@@ -85,7 +106,7 @@ impl<const N: usize> WifiState<N> {
     fn load(&mut self, data: &[u8]) -> Result<(), Error> {
         let root = TLVList::new(data).iter().next().ok_or(ErrorCode::Invalid)?;
 
-        tlv::from_tlv(&mut self.networks, &root)?;
+        tlv::vec_from_tlv(&mut self.networks, &root)?;
 
         self.changed = false;
 
@@ -119,7 +140,7 @@ pub struct WifiContext<const N: usize, M>
 where
     M: RawMutex,
 {
-    state: blocking_mutex::Mutex<M, RefCell<WifiState<N>>>,
+    state: blmutex::Mutex<M, RefCell<WifiState<N>>>,
     state_changed: Notification<M>,
     network_connect_requested: Notification<M>,
 }
@@ -131,16 +152,18 @@ where
     /// Create a new instance.
     pub const fn new() -> Self {
         Self {
-            state: blocking_mutex::Mutex::new(RefCell::new(WifiState {
-                networks: heapless::Vec::new(),
-                connected_once: false,
-                connect_requested: None,
-                status: None,
-                changed: false,
-            })),
+            state: blmutex::Mutex::new(RefCell::new(WifiState::new())),
             state_changed: Notification::new(),
             network_connect_requested: Notification::new(),
         }
+    }
+
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            state <- blmutex::Mutex::init(RefCell::init(WifiState::init())),
+            state_changed: Notification::new(),
+            network_connect_requested: Notification::new(),
+        })
     }
 
     /// Reset the state.

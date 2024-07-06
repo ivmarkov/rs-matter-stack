@@ -23,6 +23,7 @@ use rs_matter::data_model::objects::{Dataver, Endpoint, HandlerCompat, Node};
 use rs_matter::data_model::system_model::descriptor;
 use rs_matter::error::Error;
 use rs_matter::secure_channel::spake2p::VerifierData;
+use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::CommissioningData;
 
@@ -30,7 +31,7 @@ use rs_matter_stack::netif::UnixNetif;
 use rs_matter_stack::persist::{DirKvBlobStore, KvBlobBuf, KvPersist};
 use rs_matter_stack::EthMatterStack;
 
-use static_cell::ConstStaticCell;
+use static_cell::StaticCell;
 
 #[path = "dev_att/dev_att.rs"]
 mod dev_att;
@@ -42,9 +43,24 @@ fn main() -> Result<(), Error> {
 
     info!("Starting...");
 
-    // Take the Matter stack (can be done only once),
+    // Initialize the Matter stack (can be done only once),
     // as we'll run it in this thread
-    let stack = MATTER_STACK.take();
+    let stack = MATTER_STACK
+        .uninit()
+        .init_with(EthMatterStack::init_default(
+            &BasicInfoConfig {
+                vid: 0xFFF1,
+                pid: 0x8000,
+                hw_ver: 2,
+                sw_ver: 1,
+                sw_ver_str: "1",
+                serial_no: "aabbccdd",
+                device_name: "MyLight",
+                product_name: "ACME Light",
+                vendor_name: "ACME",
+            },
+            &DEV_ATT,
+        ));
 
     // Our "light" on-off cluster.
     // Can be anything implementing `rs_matter::data_model::AsyncHandler`
@@ -116,21 +132,9 @@ fn main() -> Result<(), Error> {
 
 /// The Matter stack is allocated statically to avoid
 /// program stack blowups.
-static MATTER_STACK: ConstStaticCell<EthMatterStack<KvBlobBuf<()>>> =
-    ConstStaticCell::new(EthMatterStack::new_default(
-        &BasicInfoConfig {
-            vid: 0xFFF1,
-            pid: 0x8000,
-            hw_ver: 2,
-            sw_ver: 1,
-            sw_ver_str: "1",
-            serial_no: "aabbccdd",
-            device_name: "MyLight",
-            product_name: "ACME Light",
-            vendor_name: "ACME",
-        },
-        &dev_att::HardCodedDevAtt::new(),
-    ));
+static MATTER_STACK: StaticCell<EthMatterStack<KvBlobBuf<()>>> = StaticCell::new();
+
+const DEV_ATT: dev_att::HardCodedDevAtt = dev_att::HardCodedDevAtt::new();
 
 /// Endpoint 0 (the root endpoint) always runs
 /// the hidden Matter system clusters, so we pick ID=1

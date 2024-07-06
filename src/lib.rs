@@ -31,6 +31,7 @@ use rs_matter::respond::DefaultResponder;
 use rs_matter::transport::network::{NetworkReceive, NetworkSend};
 use rs_matter::utils::buf::PooledBuffers;
 use rs_matter::utils::epoch::Epoch;
+use rs_matter::utils::init::{init, Init};
 use rs_matter::utils::rand::Rand;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::signal::Signal;
@@ -160,6 +161,47 @@ where
             mdns,
             netif_conf: Signal::new(None),
         }
+    }
+
+    /// Create a new `MatterStack` instance.
+    #[cfg(feature = "std")]
+    #[allow(clippy::large_stack_frames)]
+    pub fn init_default(
+        dev_det: &'a BasicInfoConfig,
+        dev_att: &'a dyn DevAttDataFetcher,
+    ) -> impl Init<Self> {
+        Self::init(
+            dev_det,
+            dev_att,
+            MdnsType::default(),
+            rs_matter::utils::epoch::sys_epoch,
+            rs_matter::utils::rand::sys_rand,
+        )
+    }
+
+    #[allow(clippy::large_stack_frames)]
+    pub fn init(
+        dev_det: &'a BasicInfoConfig,
+        dev_att: &'a dyn DevAttDataFetcher,
+        mdns: MdnsType<'a>,
+        epoch: Epoch,
+        rand: Rand,
+    ) -> impl Init<Self> {
+        init!(Self {
+            matter <- Matter::init(
+                dev_det,
+                dev_att,
+                mdns.mdns_service(),
+                epoch,
+                rand,
+                MATTER_PORT,
+            ),
+            buffers <- PooledBuffers::init(0),
+            subscriptions <- Subscriptions::init(),
+            network <- N::init(),
+            mdns,
+            netif_conf: Signal::new(None),
+        })
     }
 
     /// A utility method to replace the initial mDNS implementation with another one.

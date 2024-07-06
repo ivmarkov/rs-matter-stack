@@ -22,6 +22,7 @@ use rs_matter::data_model::sdm::wifi_nw_diagnostics::{
 use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::transport::network::btp::{Btp, BtpContext, GattPeripheral};
+use rs_matter::utils::init::{init, Init};
 use rs_matter::utils::select::Coalesce;
 use rs_matter::CommissioningData;
 
@@ -75,6 +76,14 @@ where
 
     fn embedding(&self) -> &Self::Embedding {
         &self.embedding
+    }
+
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            btp_context <- BtpContext::init(),
+            wifi_context <- WifiContext::init(),
+            embedding <- E::init(),
+        })
     }
 }
 

@@ -3,6 +3,7 @@ use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 
 use rs_matter::error::Error;
 use rs_matter::utils::buf::{BufferAccess, PooledBuffers};
+use rs_matter::utils::init::{init, Init};
 use rs_matter::Matter;
 
 use crate::network::{Embedding, Network};
@@ -410,6 +411,13 @@ where
         }
     }
 
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            buf <- PooledBuffers::init(0),
+            embedding <- E::init(),
+        })
+    }
+
     pub fn buf(&self) -> &PooledBuffers<1, NoopRawMutex, KvBlobBuffer> {
         &self.buf
     }
@@ -424,4 +432,8 @@ where
     E: Embedding,
 {
     const INIT: Self = Self::new();
+
+    fn init() -> impl Init<Self> {
+        KvBlobBuf::init()
+    }
 }
