@@ -21,6 +21,7 @@ rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "in-place-
 #edge-nal-std = { path = "../edge-net/edge-nal-std" }
 #edge-mdns = { git = "https://github.com/ivmarkov/edge-net" }
 #edge-mdns = { path = "../edge-net/edge-mdns" }
+pinned-init = { git = "https://github.com/ivmarkov/pinned-init" }
 
 [features]
 default = []
