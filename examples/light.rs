@@ -21,7 +21,7 @@ use rs_matter::error::Error;
 use rs_matter::secure_channel::spake2p::VerifierData;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::std_mutex::StdRawMutex;
+use rs_matter::utils::sync::blocking::raw::StdRawMutex;
 use rs_matter::CommissioningData;
 
 use rs_matter_stack::modem::DummyLinuxModem;

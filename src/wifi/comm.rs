@@ -14,7 +14,7 @@ use rs_matter::data_model::sdm::nw_commissioning::{
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::interaction_model::core::IMStatusCode;
 use rs_matter::interaction_model::messages::ib::Status;
-use rs_matter::tlv::{FromTLV, OctetStr, TLVElement, TagType, ToTLV};
+use rs_matter::tlv::{FromTLV, Octets, TLVElement, TLVTag, TLVWrite, ToTLV};
 use rs_matter::transport::exchange::Exchange;
 
 use super::{WifiContext, WifiCredentials};
@@ -54,14 +54,14 @@ where
                 match attr.attr_id.try_into()? {
                     Attributes::MaxNetworks => AttrType::<u8>::new().encode(writer, N as u8),
                     Attributes::Networks => {
-                        writer.start_array(AttrDataWriter::TAG)?;
+                        writer.start_array(&AttrDataWriter::TAG)?;
 
                         self.networks.state.lock(|state| {
                             let state = state.borrow();
 
                             for network in &state.networks {
                                 let nw_info = NwInfo {
-                                    network_id: OctetStr(network.ssid.as_str().as_bytes()),
+                                    network_id: Octets(network.ssid.as_str().as_bytes()),
                                     connected: state
                                         .status
                                         .as_ref()
@@ -75,7 +75,7 @@ where
                                         .unwrap_or(false),
                                 };
 
-                                nw_info.to_tlv(&mut writer, TagType::Anonymous)?;
+                                nw_info.to_tlv(&TLVTag::Anonymous, &mut *writer)?;
                             }
 
                             Ok::<_, Error>(())
@@ -100,7 +100,7 @@ where
                                 .borrow()
                                 .status
                                 .as_ref()
-                                .map(|o| OctetStr(o.ssid.as_str().as_bytes())),
+                                .map(|o| Octets(o.ssid.as_str().as_bytes())),
                         )
                     }),
                     Attributes::LastConnectErrorValue => self.networks.state.lock(|state| {

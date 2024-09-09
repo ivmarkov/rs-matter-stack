@@ -29,12 +29,12 @@ use rs_matter::mdns::{Mdns, MdnsService};
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::transport::network::{NetworkReceive, NetworkSend};
-use rs_matter::utils::buf::PooledBuffers;
 use rs_matter::utils::epoch::Epoch;
 use rs_matter::utils::init::{init, Init};
 use rs_matter::utils::rand::Rand;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::signal::Signal;
+use rs_matter::utils::storage::pooled::PooledBuffers;
+use rs_matter::utils::sync::Signal;
 use rs_matter::{CommissioningData, Matter, MATTER_PORT};
 
 use crate::netif::{Netif, NetifConf};
