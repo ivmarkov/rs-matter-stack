@@ -4,10 +4,10 @@ use embassy_time::{Duration, Timer};
 use log::{info, warn};
 
 use rs_matter::data_model::sdm::nw_commissioning::NetworkCommissioningStatus;
-use rs_matter::error::Error;
+use rs_matter::error::{Error, ErrorCode};
 use rs_matter::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
 use rs_matter::utils::cell::RefCell;
-use rs_matter::utils::init::{init, ApplyInit, Init};
+use rs_matter::utils::init::{init, Init};
 use rs_matter::utils::storage::WriteBuf;
 use rs_matter::utils::sync::blocking::Mutex;
 use rs_matter::utils::sync::Notification;
@@ -106,8 +106,18 @@ impl<const N: usize> WifiState<N> {
     fn load(&mut self, data: &[u8]) -> Result<(), Error> {
         let root = TLVElement::new(data);
 
+        let iter = root.array()?.iter();
+
         self.networks.clear();
-        rs_matter::utils::storage::Vec::init_from_tlv(root).apply(&mut self.networks)?;
+
+        for creds in iter {
+            let creds = creds?;
+
+            self.networks
+                .push_init(WifiCredentials::init_from_tlv(creds), || {
+                    ErrorCode::NoSpace.into()
+                })?;
+        }
 
         self.changed = false;
 
