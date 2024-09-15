@@ -16,7 +16,6 @@ use rs_matter::data_model::sdm::{ethernet_nw_diagnostics, nw_commissioning};
 use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::utils::init::{init, Init};
-use rs_matter::CommissioningData;
 
 use crate::netif::Netif;
 use crate::network::{Embedding, Network};
@@ -94,6 +93,14 @@ where
         Ok(())
     }
 
+    /// Enable basic commissioning over IP (mDNS) by setting up a PASE session and printing the pairing code and QR code.
+    /// 
+    /// The method will return an error if there is not enough space in the buffer to print the pairing code and QR code
+    /// or if the PASE session could not be set up (due to another PASE session already being active, for example).
+    pub async fn enable_basic_commissioning(&self) -> Result<(), Error> {
+        self.matter().enable_basic_commissioning(DiscoveryCapabilities::IP, 0).await // TODO
+    }
+
     /// Run the Matter stack for Ethernet network.
     ///
     /// Parameters:
@@ -104,9 +111,8 @@ where
     /// - `user` - a user-provided future that will be polled only when the netif interface is up
     pub async fn run<'d, H, P, I, U>(
         &self,
-        persist: P,
+        mut persist: P,
         netif: I,
-        dev_comm: CommissioningData,
         handler: H,
         user: U,
     ) -> Result<(), Error>
@@ -120,10 +126,15 @@ where
 
         let mut user = pin!(user);
 
+        // TODO persist.load().await?;
+
+        if !self.is_commissioned().await? {
+            self.enable_basic_commissioning().await?;
+        }
+
         self.run_with_netif(
             persist,
             netif,
-            Some((dev_comm, DiscoveryCapabilities::new(true, false, false))),
             handler,
             &mut user,
         )

@@ -9,7 +9,7 @@
 #![warn(clippy::large_types_passed_by_value)]
 
 use core::future::Future;
-use core::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
+use core::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use core::pin::pin;
 
 use edge_nal::{UdpBind, UdpSplit};
@@ -26,7 +26,6 @@ use rs_matter::data_model::sdm::dev_att::DevAttDataFetcher;
 use rs_matter::data_model::subscriptions::Subscriptions;
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::mdns::{Mdns, MdnsService};
-use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::transport::network::{NetworkReceive, NetworkSend};
 use rs_matter::utils::epoch::Epoch;
@@ -35,7 +34,7 @@ use rs_matter::utils::rand::Rand;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::sync::Signal;
-use rs_matter::{CommissioningData, Matter, MATTER_PORT};
+use rs_matter::{BasicCommData, Matter, MATTER_PORT};
 
 use crate::netif::{Netif, NetifConf};
 use crate::network::Network;
@@ -125,10 +124,12 @@ where
     #[inline(always)]
     pub const fn new_default(
         dev_det: &'a BasicInfoConfig,
+        dev_comm: BasicCommData,
         dev_att: &'a dyn DevAttDataFetcher,
     ) -> Self {
         Self::new(
             dev_det,
+            dev_comm,
             dev_att,
             MdnsType::default(),
             rs_matter::utils::epoch::sys_epoch,
@@ -141,6 +142,7 @@ where
     #[inline(always)]
     pub const fn new(
         dev_det: &'a BasicInfoConfig,
+        dev_comm: BasicCommData,
         dev_att: &'a dyn DevAttDataFetcher,
         mdns: MdnsType<'a>,
         epoch: Epoch,
@@ -149,6 +151,7 @@ where
         Self {
             matter: Matter::new(
                 dev_det,
+                dev_comm,
                 dev_att,
                 mdns.mdns_service(),
                 epoch,
@@ -168,10 +171,12 @@ where
     #[allow(clippy::large_stack_frames)]
     pub fn init_default(
         dev_det: &'a BasicInfoConfig,
+        dev_comm: BasicCommData,
         dev_att: &'a dyn DevAttDataFetcher,
     ) -> impl Init<Self> {
         Self::init(
             dev_det,
+            dev_comm,
             dev_att,
             MdnsType::default(),
             rs_matter::utils::epoch::sys_epoch,
@@ -182,6 +187,7 @@ where
     #[allow(clippy::large_stack_frames)]
     pub fn init(
         dev_det: &'a BasicInfoConfig,
+        dev_comm: BasicCommData,
         dev_att: &'a dyn DevAttDataFetcher,
         mdns: MdnsType<'a>,
         epoch: Epoch,
@@ -190,6 +196,7 @@ where
         init!(Self {
             matter <- Matter::init(
                 dev_det,
+                dev_comm,
                 dev_att,
                 mdns.mdns_service(),
                 epoch,
@@ -277,6 +284,11 @@ where
             .await
     }
 
+    /// Return information whether the Matter instance is already commissioned.
+    pub async fn is_commissioned(&self) -> Result<bool, Error> {
+        Ok(self.matter().is_commissioned())
+    }
+
     /// This method is a specialization of `run_with_transport` over the UDP transport (both IPv4 and IPv6).
     /// It calls `run_with_transport` and in parallel runs the mDNS service.
     ///
@@ -286,14 +298,12 @@ where
     /// Parameters:
     /// - `persist` - a user-provided `Persist` implementation
     /// - `netif` - a user-provided `Netif` implementation
-    /// - `dev_comm` - the commissioning data and discovery capabilities
     /// - `handler` - a user-provided DM handler implementation
     /// - `user` - a user-provided future that will be polled only when the netif interface is up
     pub async fn run_with_netif<'d, H, P, I, U>(
         &self,
         mut persist: P,
         netif: I,
-        dev_comm: Option<(CommissioningData, DiscoveryCapabilities)>,
         handler: H,
         user: U,
     ) -> Result<(), Error>
@@ -355,7 +365,6 @@ where
                 udp::Udp(send),
                 udp::Udp(recv),
                 &mut persist,
-                dev_comm.clone(),
                 &handler
             ));
             let mut mdns = pin!(self.run_builtin_mdns(&netif, &netif_conf));
@@ -400,7 +409,6 @@ where
         send: S,
         recv: R,
         persist: P,
-        dev_comm: Option<(CommissioningData, DiscoveryCapabilities)>,
         handler: H,
     ) -> Result<(), Error>
     where
@@ -414,7 +422,7 @@ where
 
         let mut psm = pin!(self.run_psm(persist));
         let mut respond = pin!(self.run_responder(handler));
-        let mut transport = pin!(self.run_transport(send, recv, dev_comm));
+        let mut transport = pin!(self.run_transport(send, recv));
 
         select3(&mut psm, &mut respond, &mut transport)
             .coalesce()
@@ -515,9 +523,10 @@ where
                         &Host {
                             id: 0,
                             hostname: &hostname,
-                            ip: _netif_conf.ipv4.octets(),
-                            ipv6: Some(_netif_conf.ipv6.octets()),
+                            ip: Ipv4Addr::UNSPECIFIED, //_netif_conf.ipv4,
+                            ipv6: _netif_conf.ipv6,
                         },
+                        None, //Some(_netif_conf.ipv4),
                         Some(_netif_conf.interface),
                     )
                     .await?;
@@ -535,17 +544,12 @@ where
         Ok(())
     }
 
-    async fn run_transport<S, R>(
-        &self,
-        send: S,
-        recv: R,
-        dev_comm: Option<(CommissioningData, DiscoveryCapabilities)>,
-    ) -> Result<(), Error>
+    async fn run_transport<S, R>(&self, send: S, recv: R) -> Result<(), Error>
     where
         S: NetworkSend,
         R: NetworkReceive,
     {
-        self.matter().run(send, recv, dev_comm).await?;
+        self.matter().run_transport(send, recv).await?;
 
         Ok(())
     }

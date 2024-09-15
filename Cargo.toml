@@ -25,7 +25,7 @@ rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "tip" }
 [features]
 default = []
 zeroconf = ["os", "rs-matter/zeroconf"]
-os = ["backtrace", "rs-matter/os", "rs-matter/mbedtls", "embassy-time/std", "embassy-time/generic-queue"]
+os = ["backtrace", "rs-matter/os", "rs-matter/rustcrypto", "embassy-time/std", "embassy-time/generic-queue"]
 backtrace = ["std", "rs-matter/backtrace"]
 std = ["alloc", "rs-matter/std", "edge-nal-std"]
 alloc = ["embedded-svc/alloc"]
@@ -45,6 +45,7 @@ edge-nal-std = { version = "0.3", optional = true }
 edge-mdns = { version = "0.3", optional = true }
 
 [target.'cfg(all(unix, not(target_os = "espidf")))'.dependencies]
+bitflags = "2"
 nix = { version = "0.27", features = ["net"], optional = true }
 
 [dev-dependencies]

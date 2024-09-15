@@ -226,9 +226,10 @@ mod unix {
             NetifSearchFlags::NON_LOOPBACK
                 | NetifSearchFlags::NON_PEER_TO_PEER
                 | NetifSearchFlags::BROADCAST
-                | NetifSearchFlags::IPV4
+                //| NetifSearchFlags::IPV4
                 | NetifSearchFlags::IPV6
-                | NetifSearchFlags::IPV6_LINK_LOCAL
+                //| NetifSearchFlags::IPV6_LINK_LOCAL
+                | NetifSearchFlags::IPV6_NON_LINK_LOCAL
         }
     }
 

@@ -14,6 +14,7 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
+use env_logger::Target;
 use log::info;
 
 use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
@@ -22,10 +23,9 @@ use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::data_model::objects::{Dataver, Endpoint, HandlerCompat, Node};
 use rs_matter::data_model::system_model::descriptor;
 use rs_matter::error::Error;
-use rs_matter::secure_channel::spake2p::VerifierData;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::CommissioningData;
+use rs_matter::BasicCommData;
 
 use rs_matter_stack::netif::UnixNetif;
 use rs_matter_stack::persist::{DirKvBlobStore, KvBlobBuf, KvPersist};
@@ -37,9 +37,11 @@ use static_cell::StaticCell;
 mod dev_att;
 
 fn main() -> Result<(), Error> {
-    env_logger::init_from_env(
+    env_logger::Builder::from_env(
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
-    );
+    )
+    .target(Target::Stdout)
+    .init();
 
     info!("Starting...");
 
@@ -50,7 +52,7 @@ fn main() -> Result<(), Error> {
         .init_with(EthMatterStack::init_default(
             &BasicInfoConfig {
                 vid: 0xFFF1,
-                pid: 0x8000,
+                pid: 0x8001,
                 hw_ver: 2,
                 sw_ver: 1,
                 sw_ver_str: "1",
@@ -58,6 +60,10 @@ fn main() -> Result<(), Error> {
                 device_name: "MyLight",
                 product_name: "ACME Light",
                 vendor_name: "ACME",
+            },
+            BasicCommData {
+                password: 20202021,
+                discriminator: 3840,
             },
             &DEV_ATT,
         ));
@@ -94,11 +100,6 @@ fn main() -> Result<(), Error> {
         KvPersist::new_eth(DirKvBlobStore::new_default(), stack),
         // Will try to find a default network interface
         UnixNetif::default(),
-        // Hard-coded for demo purposes
-        CommissioningData {
-            verifier: VerifierData::new_with_pw(123456, stack.matter().rand()),
-            discriminator: 250,
-        },
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
         // No user future to run

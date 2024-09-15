@@ -49,7 +49,6 @@ pub struct DummyPersist;
 
 impl Persist for DummyPersist {
     async fn reset(&mut self) -> Result<(), Error> {
-        // TODO
         Ok(())
     }
 

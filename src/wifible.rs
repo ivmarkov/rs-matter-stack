@@ -24,7 +24,6 @@ use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::transport::network::btp::{Btp, BtpContext, GattPeripheral};
 use rs_matter::utils::init::{init, Init};
 use rs_matter::utils::select::Coalesce;
-use rs_matter::CommissioningData;
 
 use crate::modem::{Modem, WifiDevice};
 use crate::netif::Netif;
@@ -137,15 +136,6 @@ where
         Ok(())
     }
 
-    /// Return information whether the Matter instance is already commissioned.
-    ///
-    /// User might need to reach out to this method only when it needs finer-grained control
-    /// and utilizes the `commission` and `operate` methods rather than the all-in-one `run` loop.
-    pub async fn is_commissioned(&self) -> Result<bool, Error> {
-        // TODO
-        Ok(false)
-    }
-
     /// A utility method to run the Matter stack in Operating mode (as per the Matter Core spec) over Wifi.
     ///
     /// This method assumes that the Matter instance is already commissioned and therefore
@@ -183,7 +173,7 @@ where
 
         let mut mgr = WifiManager::new(wifi, &self.network.wifi_context);
 
-        let mut main = pin!(self.run_with_netif(persist, netif, None, handler, &mut user));
+        let mut main = pin!(self.run_with_netif(persist, netif, handler, &mut user));
         let mut wifi = pin!(mgr.run());
 
         select(&mut wifi, &mut main).coalesce().await
@@ -204,7 +194,6 @@ where
         &'static self,
         persist: P,
         gatt: G,
-        dev_comm: CommissioningData,
         handler: H,
     ) -> Result<(), Error>
     where
@@ -214,10 +203,12 @@ where
     {
         info!("Running Matter in commissioning mode (BLE)");
 
+        self.matter().enable_basic_commissioning(DiscoveryCapabilities::BLE, 0).await?; // TODO
+
         let btp = Btp::new(gatt, &self.network.btp_context);
 
         let mut ble = pin!(async {
-            btp.run("BT", self.matter().dev_det(), &dev_comm)
+            btp.run("BT", self.matter().dev_det(), self.matter().dev_comm().discriminator)
                 .await
                 .map_err(Into::into)
         });
@@ -226,10 +217,6 @@ where
             &btp,
             &btp,
             persist,
-            Some((
-                dev_comm.clone(),
-                DiscoveryCapabilities::new(false, true, false)
-            )),
             &handler
         ));
 
@@ -250,7 +237,6 @@ where
         &'static self,
         mut persist: P,
         mut modem: O,
-        dev_comm: CommissioningData,
         handler: H,
         user: U,
     ) -> Result<(), Error>
@@ -265,16 +251,15 @@ where
         let mut user = pin!(user);
 
         loop {
-            if !self.is_commissioned().await? {
-                // Reset to factory defaults everything, as we'll do commissioning all over
-                self.reset()?;
+            // TODO persist.load().await?;
 
+            if !self.is_commissioned().await? {
                 let gatt = modem.ble().await;
 
                 info!("BLE driver initialized");
 
                 let mut main =
-                    pin!(self.commission(&mut persist, gatt, dev_comm.clone(), &handler));
+                    pin!(self.commission(&mut persist, gatt, &handler));
                 let mut wait_network_connect = pin!(async {
                     self.network.wifi_context.wait_network_connect().await;
                     Ok(())
