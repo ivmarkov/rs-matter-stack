@@ -2,7 +2,8 @@ use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 
 use rs_matter::error::Error;
-use rs_matter::utils::buf::{BufferAccess, PooledBuffers};
+use rs_matter::utils::init::{init, Init};
+use rs_matter::utils::storage::pooled::{BufferAccess, PooledBuffers};
 use rs_matter::Matter;
 
 use crate::network::{Embedding, Network};
@@ -48,7 +49,6 @@ pub struct DummyPersist;
 
 impl Persist for DummyPersist {
     async fn reset(&mut self) -> Result<(), Error> {
-        // TODO
         Ok(())
     }
 
@@ -157,10 +157,6 @@ where
         let mut buf = self.buf.get().await.unwrap();
         buf.resize_default(KV_BLOB_BUF_SIZE).unwrap();
 
-        if let Some(data) = self.store.load("acls", &mut buf).await? {
-            self.matter.load_acls(data)?;
-        }
-
         if let Some(data) = self.store.load("fabrics", &mut buf).await? {
             self.matter.load_fabrics(data)?;
         }
@@ -177,7 +173,7 @@ where
     /// Run the persist instance, listening for changes in the Matter stack's state.
     pub async fn run(&mut self) -> Result<(), Error> {
         loop {
-            let wait_matter = self.matter.wait_changed();
+            let wait_fabrics = self.matter.wait_fabrics_changed();
             let wait_wifi = async {
                 if let Some(wifi_networks) = self.wifi_networks {
                     wifi_networks.wait_state_changed().await;
@@ -186,16 +182,12 @@ where
                 }
             };
 
-            select(wait_matter, wait_wifi).await;
+            select(wait_fabrics, wait_wifi).await;
 
             let mut buf = self.buf.get().await.unwrap();
             buf.resize_default(KV_BLOB_BUF_SIZE).unwrap();
 
-            if self.matter.is_changed() {
-                if let Some(data) = self.matter.store_acls(&mut buf)? {
-                    self.store.store("acls", data).await?;
-                }
-
+            if self.matter.fabrics_changed() {
                 if let Some(data) = self.matter.store_fabrics(&mut buf)? {
                     self.store.store("fabrics", data).await?;
                 }
@@ -410,6 +402,13 @@ where
         }
     }
 
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            buf <- PooledBuffers::init(0),
+            embedding <- E::init(),
+        })
+    }
+
     pub fn buf(&self) -> &PooledBuffers<1, NoopRawMutex, KvBlobBuffer> {
         &self.buf
     }
@@ -424,4 +423,8 @@ where
     E: Embedding,
 {
     const INIT: Self = Self::new();
+
+    fn init() -> impl Init<Self> {
+        KvBlobBuf::init()
+    }
 }

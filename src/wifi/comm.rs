@@ -12,9 +12,7 @@ use rs_matter::data_model::sdm::nw_commissioning::{
     ReorderNetworkRequest, ResponseCommands, ScanNetworksRequest, WIFI_CLUSTER,
 };
 use rs_matter::error::{Error, ErrorCode};
-use rs_matter::interaction_model::core::IMStatusCode;
-use rs_matter::interaction_model::messages::ib::Status;
-use rs_matter::tlv::{FromTLV, OctetStr, TLVElement, TagType, ToTLV};
+use rs_matter::tlv::{FromTLV, Octets, TLVElement, TLVTag, TLVWrite, ToTLV};
 use rs_matter::transport::exchange::Exchange;
 
 use super::{WifiContext, WifiCredentials};
@@ -54,14 +52,14 @@ where
                 match attr.attr_id.try_into()? {
                     Attributes::MaxNetworks => AttrType::<u8>::new().encode(writer, N as u8),
                     Attributes::Networks => {
-                        writer.start_array(AttrDataWriter::TAG)?;
+                        writer.start_array(&AttrDataWriter::TAG)?;
 
                         self.networks.state.lock(|state| {
                             let state = state.borrow();
 
                             for network in &state.networks {
                                 let nw_info = NwInfo {
-                                    network_id: OctetStr(network.ssid.as_str().as_bytes()),
+                                    network_id: Octets(network.ssid.as_str().as_bytes()),
                                     connected: state
                                         .status
                                         .as_ref()
@@ -75,7 +73,7 @@ where
                                         .unwrap_or(false),
                                 };
 
-                                nw_info.to_tlv(&mut writer, TagType::Anonymous)?;
+                                nw_info.to_tlv(&TLVTag::Anonymous, &mut *writer)?;
                             }
 
                             Ok::<_, Error>(())
@@ -100,7 +98,7 @@ where
                                 .borrow()
                                 .status
                                 .as_ref()
-                                .map(|o| OctetStr(o.ssid.as_str().as_bytes())),
+                                .map(|o| Octets(o.ssid.as_str().as_bytes())),
                         )
                     }),
                     Attributes::LastConnectErrorValue => self.networks.state.lock(|state| {
@@ -157,16 +155,45 @@ where
     fn scan_networks(
         &self,
         _exchange: &Exchange<'_>,
-        _req: &ScanNetworksRequest<'_>,
-        encoder: CmdDataEncoder<'_, '_, '_>,
+        req: &ScanNetworksRequest<'_>,
+        _encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        let writer = encoder.with_command(ResponseCommands::ScanNetworksResponse as _)?;
-
+        info!("ScanNetworks req: {:?}", req);
         warn!("Scan network not supported");
 
-        writer.set(Status::new(IMStatusCode::Busy, 0))?;
+        // Unfortunately Alexa calls `ScanNetworks` even if we have explicitly communicated
+        // that we do not support concurrent commissioning
+        //
+        // Cheat and declare that the SSID it is asking for is found
 
-        Ok(())
+        // let mut writer = encoder.with_command(ResponseCommands::ScanNetworksResponse as _)?;
+
+        // writer.start_struct(&CmdDataWriter::TAG)?;
+
+        // NetworkCommissioningStatus::Success.to_tlv(&TLVTag::Context(ScanNetworksResponseTag::Status as _), &mut *writer)?;
+
+        // writer.utf8(&TLVTag::Context(ScanNetworksResponseTag::DebugText as _), "")?;
+
+        // writer.start_array(&TLVTag::Context(ScanNetworksResponseTag::WifiScanResults as _))?;
+
+        // WiFiInterfaceScanResult {
+        //     security: WiFiSecurity::Wpa2Personal,
+        //     ssid: Octets(b"test\0"),
+        //     bssid: Octets(&[0xF4, 0x6A, 0xDD, 0xF4, 0xF2, 0xB5]),
+        //     channel: 20,
+        //     band: None,
+        //     rssi: None,
+        // }
+        // .to_tlv(&TLVTag::Anonymous, &mut *writer)?;
+
+        // writer.end_container()?;
+        // writer.end_container()?;
+
+        // writer.complete()?;
+
+        // Ok(())
+
+        Err(ErrorCode::Busy)?
     }
 
     fn add_network(

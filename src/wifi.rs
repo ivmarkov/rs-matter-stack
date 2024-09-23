@@ -1,15 +1,16 @@
-use core::cell::RefCell;
-
-use embassy_sync::blocking_mutex::{self, raw::RawMutex};
+use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::{Duration, Timer};
 
 use log::{info, warn};
 
 use rs_matter::data_model::sdm::nw_commissioning::NetworkCommissioningStatus;
 use rs_matter::error::{Error, ErrorCode};
-use rs_matter::tlv::{self, FromTLV, TLVList, TLVWriter, TagType, ToTLV};
-use rs_matter::utils::notification::Notification;
-use rs_matter::utils::writebuf::WriteBuf;
+use rs_matter::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
+use rs_matter::utils::cell::RefCell;
+use rs_matter::utils::init::{init, Init};
+use rs_matter::utils::storage::WriteBuf;
+use rs_matter::utils::sync::blocking::Mutex;
+use rs_matter::utils::sync::Notification;
 
 pub mod comm;
 pub mod mgmt;
@@ -27,7 +28,7 @@ struct WifiStatus {
 }
 
 struct WifiState<const N: usize> {
-    networks: heapless::Vec<WifiCredentials, N>,
+    networks: rs_matter::utils::storage::Vec<WifiCredentials, N>,
     connected_once: bool,
     connect_requested: Option<heapless::String<32>>,
     status: Option<WifiStatus>,
@@ -35,6 +36,26 @@ struct WifiState<const N: usize> {
 }
 
 impl<const N: usize> WifiState<N> {
+    const fn new() -> Self {
+        Self {
+            networks: rs_matter::utils::storage::Vec::new(),
+            connected_once: false,
+            connect_requested: None,
+            status: None,
+            changed: false,
+        }
+    }
+
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            networks <- rs_matter::utils::storage::Vec::init(),
+            connected_once: false,
+            connect_requested: None,
+            status: None,
+            changed: false,
+        })
+    }
+
     pub(crate) fn get_next_network(&mut self, last_ssid: Option<&str>) -> Option<WifiCredentials> {
         // Return the requested network with priority
         if let Some(ssid) = self.connect_requested.take() {
@@ -83,9 +104,20 @@ impl<const N: usize> WifiState<N> {
     }
 
     fn load(&mut self, data: &[u8]) -> Result<(), Error> {
-        let root = TLVList::new(data).iter().next().ok_or(ErrorCode::Invalid)?;
+        let root = TLVElement::new(data);
 
-        tlv::from_tlv(&mut self.networks, &root)?;
+        let iter = root.array()?.iter();
+
+        self.networks.clear();
+
+        for creds in iter {
+            let creds = creds?;
+
+            self.networks
+                .push_init(WifiCredentials::init_from_tlv(creds), || {
+                    ErrorCode::NoSpace.into()
+                })?;
+        }
 
         self.changed = false;
 
@@ -98,15 +130,12 @@ impl<const N: usize> WifiState<N> {
         }
 
         let mut wb = WriteBuf::new(buf);
-        let mut tw = TLVWriter::new(&mut wb);
 
-        self.networks
-            .as_slice()
-            .to_tlv(&mut tw, TagType::Anonymous)?;
+        self.networks.to_tlv(&TLVTag::Anonymous, &mut wb)?;
 
         self.changed = false;
 
-        let len = tw.get_tail();
+        let len = wb.get_tail();
 
         Ok(Some(&buf[..len]))
     }
@@ -119,7 +148,7 @@ pub struct WifiContext<const N: usize, M>
 where
     M: RawMutex,
 {
-    state: blocking_mutex::Mutex<M, RefCell<WifiState<N>>>,
+    state: Mutex<M, RefCell<WifiState<N>>>,
     state_changed: Notification<M>,
     network_connect_requested: Notification<M>,
 }
@@ -131,16 +160,18 @@ where
     /// Create a new instance.
     pub const fn new() -> Self {
         Self {
-            state: blocking_mutex::Mutex::new(RefCell::new(WifiState {
-                networks: heapless::Vec::new(),
-                connected_once: false,
-                connect_requested: None,
-                status: None,
-                changed: false,
-            })),
+            state: Mutex::new(RefCell::new(WifiState::new())),
             state_changed: Notification::new(),
             network_connect_requested: Notification::new(),
         }
+    }
+
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            state <- Mutex::init(RefCell::init(WifiState::init())),
+            state_changed: Notification::new(),
+            network_connect_requested: Notification::new(),
+        })
     }
 
     /// Reset the state.

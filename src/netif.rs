@@ -151,13 +151,86 @@ where
 mod unix {
     use alloc::string::String;
 
+    use bitflags::bitflags;
+
     use embassy_time::{Duration, Timer};
-    use nix::{
-        net::if_::InterfaceFlags,
-        sys::socket::{SockaddrIn6, SockaddrStorage},
-    };
+
+    use nix::net::if_::InterfaceFlags;
+    use nix::sys::socket::{SockaddrIn6, SockaddrStorage};
 
     use super::{Netif, NetifConf};
+
+    bitflags! {
+        /// DefaultNetif is a set of flags that can be used to filter network interfaces
+        /// when calling `default_if`
+        #[repr(transparent)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub struct NetifSearchFlags: u16 {
+            /// Consider only interfaces which have the Loopback flag set
+            const LOOPBACK = 0x0001;
+            /// Consider only interfaces which do not have the Loopback flag set
+            const NON_LOOPBACK = 0x0002;
+            /// Consider only interfaces which have the Point-to-Point flag set
+            const PEER_TO_PEER = 0x0004;
+            /// Consider only interfaces which do not have the Point-to-Point flag set
+            const NON_PEER_TO_PEER = 0x0008;
+            /// Consider only interfaces which have the Broadcast flag set
+            const BROADCAST = 0x0010;
+            /// Consider only interfaces which do have an IPv4 address assigned
+            const IPV4 = 0x0020;
+            /// Consider only interfaces which do have an IPv6 address assigned
+            const IPV6 = 0x0040;
+            /// Consider only interfaces which do have a Link-Local IPv6 address assigned
+            const IPV6_LINK_LOCAL = 0x0080;
+            /// Consider only interfaces which do have a non-Link-Local IPv6 address assigned
+            const IPV6_NON_LINK_LOCAL = 0x0100;
+        }
+    }
+
+    impl NetifSearchFlags {
+        fn contains_if_flags(&self) -> InterfaceFlags {
+            let mut flags = InterfaceFlags::empty();
+
+            if self.contains(NetifSearchFlags::LOOPBACK) {
+                flags |= InterfaceFlags::IFF_LOOPBACK;
+            }
+
+            if self.contains(NetifSearchFlags::PEER_TO_PEER) {
+                flags |= InterfaceFlags::IFF_POINTOPOINT;
+            }
+
+            if self.contains(NetifSearchFlags::BROADCAST) {
+                flags |= InterfaceFlags::IFF_BROADCAST;
+            }
+
+            flags
+        }
+
+        fn not_contains_if_flags(&self) -> InterfaceFlags {
+            let mut flags = InterfaceFlags::empty();
+
+            if self.contains(NetifSearchFlags::NON_LOOPBACK) {
+                flags |= InterfaceFlags::IFF_LOOPBACK;
+            }
+
+            if self.contains(NetifSearchFlags::NON_PEER_TO_PEER) {
+                flags |= InterfaceFlags::IFF_POINTOPOINT;
+            }
+
+            flags
+        }
+    }
+
+    impl Default for NetifSearchFlags {
+        fn default() -> Self {
+            NetifSearchFlags::NON_LOOPBACK
+                | NetifSearchFlags::NON_PEER_TO_PEER
+                | NetifSearchFlags::BROADCAST
+                | NetifSearchFlags::IPV4
+                | NetifSearchFlags::IPV6
+                | NetifSearchFlags::IPV6_LINK_LOCAL
+        }
+    }
 
     /// UnixNetif works on any Unix-like OS
     ///
@@ -169,7 +242,7 @@ mod unix {
         /// Create a new `UnixNetif`. The implementation will try
         /// to find and use a suitable interface automatically.
         pub fn new_default() -> Self {
-            Self(default_if().unwrap())
+            Self::search(NetifSearchFlags::default()).next().unwrap()
         }
 
         /// Create a new `UnixNetif` for the given interface name
@@ -179,6 +252,72 @@ mod unix {
 
         pub fn get_conf(&self) -> Option<NetifConf> {
             get_if_conf(&self.0)
+        }
+
+        /// Search for network interfaces that match the given flags
+        pub fn search(flags: NetifSearchFlags) -> impl Iterator<Item = Self> {
+            nix::ifaddrs::getifaddrs()
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter(move |ia| {
+                    ia.flags.contains(flags.contains_if_flags())
+                        && !ia.flags.intersects(flags.not_contains_if_flags())
+                })
+                .filter(move |ia| {
+                    !flags.contains(NetifSearchFlags::IPV4)
+                        || ia
+                            .address
+                            .map(|addr| addr.as_sockaddr_in().is_some())
+                            .unwrap_or(false)
+                })
+                .map(|ia| ia.interface_name)
+                .filter(move |ifname| {
+                    // Now also check the Ipv6 conditions
+
+                    if !flags.intersects(
+                        NetifSearchFlags::IPV6
+                            | NetifSearchFlags::IPV6_LINK_LOCAL
+                            | NetifSearchFlags::IPV6_NON_LINK_LOCAL,
+                    ) {
+                        return true;
+                    }
+
+                    let Ok(iter) = nix::ifaddrs::getifaddrs() else {
+                        return false;
+                    };
+
+                    let mut ipv6 = false;
+                    let mut ipv6_link_local = !flags.contains(NetifSearchFlags::IPV6_LINK_LOCAL);
+                    let mut ipv6_non_link_local =
+                        !flags.contains(NetifSearchFlags::IPV6_NON_LINK_LOCAL);
+
+                    for ia2 in iter {
+                        if &ia2.interface_name == ifname {
+                            if let Some(ip) = ia2
+                                .address
+                                .and_then(|addr| addr.as_sockaddr_in6().map(SockaddrIn6::ip))
+                            {
+                                ipv6 = true;
+
+                                if flags.contains(NetifSearchFlags::IPV6_LINK_LOCAL)
+                                    && ip.octets()[..2] == [0xfe, 0x80]
+                                {
+                                    ipv6_link_local = true;
+                                }
+
+                                if flags.contains(NetifSearchFlags::IPV6_NON_LINK_LOCAL)
+                                    && ip.octets()[..2] != [0xfe, 0x80]
+                                {
+                                    ipv6_non_link_local = true;
+                                }
+                            }
+                        }
+                    }
+
+                    ipv6 && ipv6_link_local && ipv6_non_link_local
+                })
+                .map(UnixNetif)
         }
     }
 
@@ -209,40 +348,6 @@ mod unix {
         async fn bind(&self, addr: core::net::SocketAddr) -> Result<Self::Socket<'_>, Self::Error> {
             edge_nal_std::Stack::new().bind(addr).await
         }
-    }
-
-    fn default_if() -> Option<String> {
-        // A quick and dirty way to get a network interface that has a link-local IPv6 address assigned as well as a non-loopback IPv4
-        // Most likely, this is the interface we need
-        // (as opposed to all the docker and libvirt interfaces that might be assigned on the machine and which seem by default to be IPv4 only)
-        nix::ifaddrs::getifaddrs()
-            .unwrap()
-            .filter(|ia| {
-                // Only take interfaces which are up, which are not PTP or loopback
-                // and which have IPv4 IP assigned
-                ia.flags
-                    .contains(InterfaceFlags::IFF_UP | InterfaceFlags::IFF_BROADCAST)
-                    && !ia
-                        .flags
-                        .intersects(InterfaceFlags::IFF_LOOPBACK | InterfaceFlags::IFF_POINTOPOINT)
-                    && ia
-                        .address
-                        .and_then(|addr| addr.as_sockaddr_in().map(|_| ()))
-                        .is_some()
-            })
-            .map(|ia| ia.interface_name)
-            .find(|ifname| {
-                // Only take interfaces which have an IPv4 address
-                nix::ifaddrs::getifaddrs()
-                    .unwrap()
-                    .filter(|ia2| &ia2.interface_name == ifname)
-                    .any(|ia2| {
-                        ia2.address
-                            .and_then(|addr| addr.as_sockaddr_in6().map(SockaddrIn6::ip))
-                            .filter(|ip| ip.octets()[..2] == [0xfe, 0x80])
-                            .is_some()
-                    })
-            })
     }
 
     fn get_if_conf(if_name: &str) -> Option<NetifConf> {

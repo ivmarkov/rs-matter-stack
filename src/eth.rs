@@ -15,7 +15,7 @@ use rs_matter::data_model::sdm::nw_commissioning::EthNwCommCluster;
 use rs_matter::data_model::sdm::{ethernet_nw_diagnostics, nw_commissioning};
 use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::CommissioningData;
+use rs_matter::utils::init::{init, Init};
 
 use crate::netif::Netif;
 use crate::network::{Embedding, Network};
@@ -32,18 +32,26 @@ use crate::MatterStack;
 ///
 /// The expectation is nevertheless that for production use-cases
 /// the `Eth` network would really only be used for Ethernet.
-pub struct Eth<E = ()>(E);
+pub struct Eth<E = ()> {
+    embedding: E,
+}
 
 impl<E> Network for Eth<E>
 where
     E: Embedding + 'static,
 {
-    const INIT: Self = Self(E::INIT);
+    const INIT: Self = Self { embedding: E::INIT };
 
     type Embedding = E;
 
     fn embedding(&self) -> &Self::Embedding {
-        &self.0
+        &self.embedding
+    }
+
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            embedding <- E::init(),
+        })
     }
 }
 
@@ -85,6 +93,16 @@ where
         Ok(())
     }
 
+    /// Enable basic commissioning over IP (mDNS) by setting up a PASE session and printing the pairing code and QR code.
+    ///
+    /// The method will return an error if there is not enough space in the buffer to print the pairing code and QR code
+    /// or if the PASE session could not be set up (due to another PASE session already being active, for example).
+    pub async fn enable_basic_commissioning(&self) -> Result<(), Error> {
+        self.matter()
+            .enable_basic_commissioning(DiscoveryCapabilities::IP, 0)
+            .await // TODO
+    }
+
     /// Run the Matter stack for Ethernet network.
     ///
     /// Parameters:
@@ -97,7 +115,6 @@ where
         &self,
         persist: P,
         netif: I,
-        dev_comm: CommissioningData,
         handler: H,
         user: U,
     ) -> Result<(), Error>
@@ -111,14 +128,14 @@ where
 
         let mut user = pin!(user);
 
-        self.run_with_netif(
-            persist,
-            netif,
-            Some((dev_comm, DiscoveryCapabilities::new(true, false, false))),
-            handler,
-            &mut user,
-        )
-        .await
+        // TODO persist.load().await?;
+
+        if !self.is_commissioned().await? {
+            self.enable_basic_commissioning().await?;
+        }
+
+        self.run_with_netif(persist, netif, handler, &mut user)
+            .await
     }
 }
 
