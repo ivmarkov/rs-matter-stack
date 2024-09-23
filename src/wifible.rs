@@ -203,22 +203,23 @@ where
     {
         info!("Running Matter in commissioning mode (BLE)");
 
-        self.matter().enable_basic_commissioning(DiscoveryCapabilities::BLE, 0).await?; // TODO
+        self.matter()
+            .enable_basic_commissioning(DiscoveryCapabilities::BLE, 0)
+            .await?; // TODO
 
         let btp = Btp::new(gatt, &self.network.btp_context);
 
         let mut ble = pin!(async {
-            btp.run("BT", self.matter().dev_det(), self.matter().dev_comm().discriminator)
-                .await
-                .map_err(Into::into)
+            btp.run(
+                "BT",
+                self.matter().dev_det(),
+                self.matter().dev_comm().discriminator,
+            )
+            .await
+            .map_err(Into::into)
         });
 
-        let mut main = pin!(self.run_with_transport(
-            &btp,
-            &btp,
-            persist,
-            &handler
-        ));
+        let mut main = pin!(self.run_with_transport(&btp, &btp, persist, &handler));
 
         select(&mut ble, &mut main).coalesce().await
     }
@@ -258,8 +259,7 @@ where
 
                 info!("BLE driver initialized");
 
-                let mut main =
-                    pin!(self.commission(&mut persist, gatt, &handler));
+                let mut main = pin!(self.commission(&mut persist, gatt, &handler));
                 let mut wait_network_connect = pin!(async {
                     self.network.wifi_context.wait_network_connect().await;
                     Ok(())

@@ -94,11 +94,13 @@ where
     }
 
     /// Enable basic commissioning over IP (mDNS) by setting up a PASE session and printing the pairing code and QR code.
-    /// 
+    ///
     /// The method will return an error if there is not enough space in the buffer to print the pairing code and QR code
     /// or if the PASE session could not be set up (due to another PASE session already being active, for example).
     pub async fn enable_basic_commissioning(&self) -> Result<(), Error> {
-        self.matter().enable_basic_commissioning(DiscoveryCapabilities::IP, 0).await // TODO
+        self.matter()
+            .enable_basic_commissioning(DiscoveryCapabilities::IP, 0)
+            .await // TODO
     }
 
     /// Run the Matter stack for Ethernet network.
@@ -132,13 +134,8 @@ where
             self.enable_basic_commissioning().await?;
         }
 
-        self.run_with_netif(
-            persist,
-            netif,
-            handler,
-            &mut user,
-        )
-        .await
+        self.run_with_netif(persist, netif, handler, &mut user)
+            .await
     }
 }
 
