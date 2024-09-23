@@ -9,7 +9,7 @@
 #![warn(clippy::large_types_passed_by_value)]
 
 use core::future::Future;
-use core::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
+use core::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 use core::pin::pin;
 
 use edge_nal::{UdpBind, UdpSplit};
@@ -523,10 +523,10 @@ where
                         &Host {
                             id: 0,
                             hostname: &hostname,
-                            ip: Ipv4Addr::UNSPECIFIED, //_netif_conf.ipv4,
+                            ip: _netif_conf.ipv4,
                             ipv6: _netif_conf.ipv6,
                         },
-                        None, //Some(_netif_conf.ipv4),
+                        Some(_netif_conf.ipv4),
                         Some(_netif_conf.interface),
                     )
                     .await?;
