@@ -113,7 +113,7 @@ where
     /// - `user` - a user-provided future that will be polled only when the netif interface is up
     pub async fn run<'d, H, P, I, U>(
         &self,
-        mut persist: P,
+        persist: P,
         netif: I,
         handler: H,
         user: U,
