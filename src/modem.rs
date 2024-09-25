@@ -1,221 +1,198 @@
+
 use edge_nal::UdpBind;
-
-use embedded_svc::wifi::{asynch::Wifi, AccessPointInfo, Capability, Configuration};
-
-use enumset::EnumSet;
 
 use rs_matter::transport::network::btp::GattPeripheral;
 
 use crate::netif::Netif;
+use crate::wireless::{WirelessController, WirelessStats};
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
-/// A trait representing the radio of the device, which can operate either in BLE mode, or in Wifi mode.
-pub trait Modem {
-    type BleDevice<'a>: GattPeripheral
+/// A trait representing the Wifi/Thread radio of the device
+pub trait WirelessModem {
+    type WirelessDevice<'a>: WirelessDevice
     where
         Self: 'a;
 
-    type WifiDevice<'a>: WifiDevice
-    where
-        Self: 'a;
-
-    /// Setup the radio to operate in BLE mode and return a GATT peripheral configured as per the
-    /// requirements of the `rs-matter` BTP implementation. Necessary during commissioning.
-    async fn ble(&mut self) -> Self::BleDevice<'_>;
-
-    /// Setup the radio to operate in Wifi mode and return a Wifi device that can be further split
-    /// into an "L2" portion controlling the Wifi connection aspects of the network stack, and an
+    /// Setup the radio to operate in Wifi/Thread mode and return a Wireless device that can be further split
+    /// into an "L2" portion controlling the Wifi/Thread connection aspects of the network stack, and an
     /// "L3" portion controlling the IP connection aspects of the network stack.
     /// Necessary during Matter operational mode.
-    async fn wifi(&mut self) -> Self::WifiDevice<'_>;
+    async fn wireless(&mut self) -> Self::WirelessDevice<'_>;
 }
 
-impl<T> Modem for &mut T
+impl<T> WirelessModem for &mut T
 where
-    T: Modem,
+    T: WirelessModem,
 {
-    type BleDevice<'a> = T::BleDevice<'a> where Self: 'a;
-    type WifiDevice<'a> = T::WifiDevice<'a> where Self: 'a;
+    type WirelessDevice<'a> = T::WirelessDevice<'a> where Self: 'a;
 
-    async fn ble(&mut self) -> Self::BleDevice<'_> {
-        T::ble(*self).await
-    }
-
-    async fn wifi(&mut self) -> Self::WifiDevice<'_> {
-        T::wifi(*self).await
+    async fn wireless(&mut self) -> Self::WirelessDevice<'_> {
+        T::wireless(*self).await
     }
 }
 
-// A trait represeting the Wifi device, which can be split into an L2 and L3 portion.
-pub trait WifiDevice {
-    type L2<'a>: Wifi
+// A trait represeting the Wireless device, which can be split into an L2 and L3 portion.
+pub trait WirelessDevice {
+    type Controller<'a>: WirelessController
     where
         Self: 'a;
 
-    type L3<'a>: Netif + UdpBind
+    type Stats<'a>: WirelessStats
     where
         Self: 'a;
 
-    async fn split(&mut self) -> (Self::L2<'_>, Self::L3<'_>);
+    type Netif<'a>: Netif + UdpBind
+    where
+        Self: 'a;
+
+    async fn split(&mut self) -> (Self::Controller<'_>, Self::Stats<'_>, Self::Netif<'_>);
 }
 
-impl<T> WifiDevice for &mut T
+impl<T> WirelessDevice for &mut T
 where
-    T: WifiDevice,
+    T: WirelessDevice,
 {
-    type L2<'a> = T::L2<'a> where Self: 'a;
-    type L3<'a> = T::L3<'a> where Self: 'a;
+    type Controller<'a> = T::Controller<'a> where Self: 'a;
 
-    async fn split(&mut self) -> (Self::L2<'_>, Self::L3<'_>) {
+    type Stats<'a> = T::Stats<'a> where Self: 'a;
+
+    type Netif<'a> = T::Netif<'a> where Self: 'a;
+
+    async fn split(&mut self) -> (Self::Controller<'_>, Self::Stats<'_>, Self::Netif<'_>) {
         T::split(*self).await
     }
 }
 
-/// A dummy modem implementation that can be used for testing purposes.
-///
-/// The "dummy" aspects of this implementation are related to the Wifi network:
-/// - The L2 (Wifi) network is simulated by a dummy network interface that does not actually connect to Wifi networks.
-/// - The L3 (IP) network is not simulated and is expected to be user-provided.
-/// - The BLE network is not simulated and is expected to be user-provided as well,
-///   because - without a functioning BLE stack - the device cannot even be commissioned.
-///
-/// On Linux, the BlueR-based BLE gatt peripheral can be used.
-pub struct DummyModem<N, B> {
-    netif_factory: N,
-    bt_factory: B,
-}
+// /// A dummy modem implementation that can be used for testing purposes.
+// ///
+// /// The "dummy" aspects of this implementation are related to the Wifi network:
+// /// - The L2 (Wifi/Thread) network is simulated by a dummy network interface that does not actually connect to Wifi/Thread networks.
+// /// - The L3 (IP) network is not simulated and is expected to be user-provided.
+// /// - The BLE network is not simulated and is expected to be user-provided as well,
+// ///   because - without a functioning BLE stack - the device cannot even be commissioned.
+// ///
+// /// On Linux, the BlueR-based BLE gatt peripheral can be used.
+// pub struct DummyModem<N, B> {
+//     netif_factory: N,
+//     bt_factory: B,
+// }
 
-impl<N, B> DummyModem<N, B> {
-    /// Create a new `DummyModem` with the given configuration, UDP `bind` stack and BLE peripheral factory
-    pub const fn new(netif_factory: N, bt_factory: B) -> Self {
-        Self {
-            netif_factory,
-            bt_factory,
-        }
-    }
-}
+// impl<N, B> DummyModem<N, B> {
+//     /// Create a new `DummyModem` with the given configuration, UDP `bind` stack and BLE peripheral factory
+//     pub const fn new(netif_factory: N, bt_factory: B) -> Self {
+//         Self {
+//             netif_factory,
+//             bt_factory,
+//         }
+//     }
+// }
 
-impl<N, B, I, G> Modem for DummyModem<N, B>
-where
-    N: FnMut() -> I,
-    B: FnMut() -> G,
-    I: Netif + UdpBind + 'static,
-    G: GattPeripheral,
-{
-    type BleDevice<'t> = G where Self: 't;
+// impl<N, B, I, G> WirelessModem for DummyModem<N, B>
+// where
+//     N: FnMut() -> I,
+//     B: FnMut() -> G,
+//     I: Netif + UdpBind + 'static,
+//     G: GattPeripheral,
+// {
+//     type WirelessDevice<'t> = DummyWirelessDevice<T, I> where Self: 't;
 
-    type WifiDevice<'t> = DummyWifiDevice<I> where Self: 't;
+//     async fn wireless(&mut self) -> Self::WirelessDevice<'_> {
+//         DummyWirelessDevice((self.netif_factory)(), PhantomData)
+//     }
+// }
 
-    async fn ble(&mut self) -> Self::BleDevice<'_> {
-        (self.bt_factory)()
-    }
+// impl<N, B, I, G> BleModem for DummyModem<N, B>
+// where
+//     N: FnMut() -> I,
+//     B: FnMut() -> G,
+//     I: Netif + UdpBind + 'static,
+//     G: GattPeripheral,
+// {
+//     type BleDevice<'t> = G where Self: 't;
 
-    async fn wifi(&mut self) -> Self::WifiDevice<'_> {
-        DummyWifiDevice((self.netif_factory)())
-    }
-}
+//     async fn ble(&mut self) -> Self::BleDevice<'_> {
+//         (self.bt_factory)()
+//     }
+// }
 
-/// A dummy Wifi device.
-///
-/// The "dummy" aspects of this implementation are related to the Wifi network:
-/// - The L2 (Wifi) network is simulated by a dummy network interface that does not actually connect to Wifi networks.
-/// - The L3 (IP) network is simulated by a `DummyNetif` instance that uses a hard-coded `NetifConf` and assumes the
-///   netif is always up
-pub struct DummyWifiDevice<N>(N);
+// /// A dummy wireless device. TODO
+// ///
+// /// The "dummy" aspects of this implementation are related to the Wifi network:
+// /// - The L2 (Wifi/Thread) network is using a disconnected controller and statistics
+// /// - The L3 (IP) network is simulated by a `DummyNetif` instance that uses a hard-coded `NetifConf` and assumes the
+// ///   netif is always up
+// pub struct DummyWirelessDevice<T, S, R, N>(PhantomData<fn() -> T>, PhantomData<fn() -> S>, R, N);
 
-impl<N> WifiDevice for DummyWifiDevice<N>
-where
-    N: Netif + UdpBind,
-{
-    type L2<'t> = DummyL2 where Self: 't;
+// impl<'a, R, N> DummyWirelessDevice<WifiCredentials, WiFiInterfaceScanResult<'a>, R, N>
+// where
+//     R: Clone,
+//     N: Netif + UdpBind,
+// {
+//     pub const fn new_wifi(stats: R, netif: N) -> Self {
+//         Self(PhantomData, PhantomData, stats, netif)
+//     }
+// }
 
-    type L3<'t> = &'t N where Self: 't;
+// impl<'a, R, N> DummyWirelessDevice<ThreadCredentials, ThreadInterfaceScanResult<'a>, R, N>
+// where
+//     R: Clone,
+//     N: Netif + UdpBind,
+// {
+//     pub const fn new_thread(stats: R, netif: N) -> Self {
+//         Self(PhantomData, PhantomData, stats, netif)
+//     }
+// }
 
-    async fn split(&mut self) -> (Self::L2<'_>, Self::L3<'_>) {
-        (DummyL2::new(), &self.0)
-    }
-}
+// impl<T, S, R, N> WirelessDevice for DummyWirelessDevice<T, S, R, N>
+// where
+//     T: NetworkCredentials,
+//     R: Clone,
+//     N: Netif + UdpBind,
+// {
+//     type Controller<'t> = DisconnectedController<T, R> where Self: 't;
 
-/// A dummy L2 Wifi device that does not actually connect to Wifi networks
-/// - yet - happily returns `Ok(())` to everything.
-pub struct DummyL2 {
-    conf: Configuration,
-    started: bool,
-    connected: bool,
-}
+//     type Stats<'t> = DisconnectedStats<R> where Self: 't;
 
-impl DummyL2 {
-    const fn new() -> Self {
-        Self {
-            conf: Configuration::None,
-            started: false,
-            connected: false,
-        }
-    }
-}
+//     type Netif<'t> = &'t N where Self: 't;
 
-impl Wifi for DummyL2 {
-    type Error = core::convert::Infallible;
+//     async fn split(&mut self) -> (Self::Controller<'_>, Self::Stats<'_>, Self::Netif<'_>) {
+//         (DisconnectedController::new(), DisconnectedStats::new(self.2.clone()), &self.3)
+//     }
+// }
 
-    async fn get_capabilities(&self) -> Result<EnumSet<Capability>, Self::Error> {
-        Ok(EnumSet::empty())
-    }
+// /// A dummy Controller wireless device that does not actually connect to Wifi/Thread networks
+// /// - yet - happily pretends to.
+// pub struct DummyController<T>(PhantomData<fn() -> T>);
 
-    async fn get_configuration(&self) -> Result<Configuration, Self::Error> {
-        Ok(self.conf.clone())
-    }
+// impl<T> DummyController<T> {
+//     const fn new() -> Self {
+//         Self(PhantomData)
+//     }
+// }
 
-    async fn set_configuration(&mut self, conf: &Configuration) -> Result<(), Self::Error> {
-        self.conf = conf.clone();
+// impl<T> WirelessController<T> for DummyController<T> 
+// where 
+//     T: NetworkCredentials,
+// {
+//     async fn scan<F>(&mut self, _network_id: Option<&[u8]>, mut callback: F) -> Result<(), Error>
+//     where 
+//         F: FnMut(Option<&T::ScanResult>),
+//     {
+//         callback(None);
 
-        Ok(())
-    }
+//         Ok(())
+//     }
 
-    async fn start(&mut self) -> Result<(), Self::Error> {
-        self.started = true;
+//     async fn connect(&mut self, _creds: &T) -> Result<(), Error> {
+//         Ok(())
+//     }
 
-        Ok(())
-    }
-
-    async fn stop(&mut self) -> Result<(), Self::Error> {
-        self.started = false;
-
-        Ok(())
-    }
-
-    async fn connect(&mut self) -> Result<(), Self::Error> {
-        self.connected = true;
-
-        Ok(())
-    }
-
-    async fn disconnect(&mut self) -> Result<(), Self::Error> {
-        self.connected = false;
-
-        Ok(())
-    }
-
-    async fn is_started(&self) -> Result<bool, Self::Error> {
-        Ok(self.started)
-    }
-
-    async fn is_connected(&self) -> Result<bool, Self::Error> {
-        Ok(self.connected)
-    }
-
-    async fn scan_n<const N: usize>(
-        &mut self,
-    ) -> Result<(heapless::Vec<AccessPointInfo, N>, usize), Self::Error> {
-        Ok((heapless::Vec::new(), 0))
-    }
-
-    #[cfg(feature = "alloc")]
-    async fn scan(&mut self) -> Result<alloc::vec::Vec<AccessPointInfo>, Self::Error> {
-        Ok(alloc::vec::Vec::new())
-    }
-}
+//     async fn connected_network(&mut self) -> Result<Option<&str>, Error> {
+//         Ok(Some("DummyNetwork")) // TODO
+//     }
+// }
 
 /// An instantiation of `DummyModem` for Linux specifically,
 /// that uses the `UnixNetif` instance and the BlueR GATT peripheral from `rs-matter`.

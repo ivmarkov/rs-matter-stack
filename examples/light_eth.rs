@@ -28,7 +28,7 @@ use rs_matter::utils::select::Coalesce;
 use rs_matter::BasicCommData;
 
 use rs_matter_stack::netif::UnixNetif;
-use rs_matter_stack::persist::{DirKvBlobStore, KvBlobBuf, KvPersist};
+use rs_matter_stack::persist::{new_kv, DirKvBlobStore, KvBlobBuf};
 use rs_matter_stack::EthMatterStack;
 
 use static_cell::StaticCell;
@@ -97,7 +97,7 @@ fn main() -> Result<(), Error> {
     // not being very intelligent w.r.t. stack usage in async functions
     let mut matter = pin!(stack.run(
         // Will persist in `<tmp-dir>/rs-matter`
-        KvPersist::new_eth(DirKvBlobStore::new_default(), stack),
+        new_kv(DirKvBlobStore::new_default(), stack),
         // Will try to find a default network interface
         UnixNetif::default(),
         // Our `AsyncHandler` + `AsyncMetadata` impl

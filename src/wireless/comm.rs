@@ -1,40 +1,46 @@
+//! Wireless network commissioning cluster.
+
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use log::{error, info, warn};
+use log::{info, warn};
 
 use rs_matter::data_model::objects::{
     AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, CmdDataEncoder, CmdDetails, Dataver,
     Handler, NonBlockingHandler,
 };
 use rs_matter::data_model::sdm::nw_commissioning::{
-    AddWifiNetworkRequest, Attributes, Commands, ConnectNetworkRequest, ConnectNetworkResponse,
-    NetworkCommissioningStatus, NetworkConfigResponse, NwInfo, RemoveNetworkRequest,
-    ReorderNetworkRequest, ResponseCommands, ScanNetworksRequest, WIFI_CLUSTER,
+    AddThreadNetworkRequest, AddWifiNetworkRequest, Attributes, Commands, ConnectNetworkRequest,
+    ConnectNetworkResponse, NetworkCommissioningStatus, NetworkConfigResponse, NwInfo,
+    RemoveNetworkRequest, ReorderNetworkRequest, ResponseCommands, ScanNetworksRequest,
+    THR_CLUSTER, WIFI_CLUSTER,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::tlv::{FromTLV, Octets, TLVElement, TLVTag, TLVWrite, ToTLV};
 use rs_matter::transport::exchange::Exchange;
 
-use super::{WifiContext, WifiCredentials};
+use super::store::NetworkContext;
+use super::NetworkCredentials;
 
 /// A cluster implementing the Matter Network Commissioning Cluster
-/// for managing WiFi networks.
+/// for managing wireless networks.
 ///
 /// `N` is the maximum number of networks that can be stored.
-pub struct WifiNwCommCluster<'a, const N: usize, M>
+pub struct WirelessNwCommCluster<'a, const N: usize, M, T>
 where
     M: RawMutex,
+    T: NetworkCredentials + Clone + for<'b> FromTLV<'b> + ToTLV,
 {
     data_ver: Dataver,
-    networks: &'a WifiContext<N, M>,
+    networks: &'a NetworkContext<N, M, T>,
 }
 
-impl<'a, const N: usize, M> WifiNwCommCluster<'a, N, M>
+impl<'a, const N: usize, M, T> WirelessNwCommCluster<'a, N, M, T>
 where
     M: RawMutex,
+    T: NetworkCredentials + Clone + for<'b> FromTLV<'b> + ToTLV,
 {
     /// Create a new instance.
-    pub const fn new(data_ver: Dataver, networks: &'a WifiContext<N, M>) -> Self {
+    pub const fn new(data_ver: Dataver, networks: &'a NetworkContext<N, M, T>) -> Self {
         Self { data_ver, networks }
     }
 
@@ -47,7 +53,11 @@ where
     ) -> Result<(), Error> {
         if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
-                WIFI_CLUSTER.read(attr.attr_id, writer)
+                if T::is_wifi() {
+                    WIFI_CLUSTER.read(attr.attr_id, writer)
+                } else {
+                    THR_CLUSTER.read(attr.attr_id, writer)
+                }
             } else {
                 match attr.attr_id.try_into()? {
                     Attributes::MaxNetworks => AttrType::<u8>::new().encode(writer, N as u8),
@@ -59,12 +69,12 @@ where
 
                             for network in &state.networks {
                                 let nw_info = NwInfo {
-                                    network_id: Octets(network.ssid.as_str().as_bytes()),
+                                    network_id: Octets(network.network_id().as_ref()),
                                     connected: state
                                         .status
                                         .as_ref()
                                         .map(|status| {
-                                            *status.ssid == network.ssid
+                                            &status.network_id == network.network_id()
                                                 && matches!(
                                                     status.status,
                                                     NetworkCommissioningStatus::Success
@@ -98,7 +108,7 @@ where
                                 .borrow()
                                 .status
                                 .as_ref()
-                                .map(|o| Octets(o.ssid.as_str().as_bytes())),
+                                .map(|o| Octets(o.network_id.as_ref())),
                         )
                     }),
                     Attributes::LastConnectErrorValue => self.networks.state.lock(|state| {
@@ -127,7 +137,15 @@ where
             }
             Commands::AddOrUpdateWifiNetwork => {
                 info!("AddOrUpdateWifiNetwork");
-                self.add_network(exchange, &AddWifiNetworkRequest::from_tlv(data)?, encoder)?;
+                self.add_wifi_network(exchange, &AddWifiNetworkRequest::from_tlv(data)?, encoder)?;
+            }
+            Commands::AddOrUpdateThreadNetwork => {
+                info!("AddOrUpdateThreadNetwork");
+                self.add_thread_network(
+                    exchange,
+                    &AddThreadNetworkRequest::from_tlv(data)?,
+                    encoder,
+                )?;
             }
             Commands::RemoveNetwork => {
                 info!("RemoveNetwork");
@@ -140,10 +158,6 @@ where
             Commands::ReorderNetwork => {
                 info!("ReorderNetwork");
                 self.reorder_network(exchange, &ReorderNetworkRequest::from_tlv(data)?, encoder)?;
-            }
-            other => {
-                error!("{other:?} (not supported)");
-                Err(ErrorCode::CommandNotFound)?
             }
         }
 
@@ -196,39 +210,55 @@ where
         Err(ErrorCode::Busy)?
     }
 
-    fn add_network(
+    fn add_wifi_network(
         &self,
-        _exchange: &Exchange<'_>,
+        exchange: &Exchange<'_>,
         req: &AddWifiNetworkRequest<'_>,
         encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
         // TODO: Check failsafe status
 
+        self.add_network(exchange, T::try_from(req)?, encoder)
+    }
+
+    fn add_thread_network(
+        &self,
+        exchange: &Exchange<'_>,
+        req: &AddThreadNetworkRequest<'_>,
+        encoder: CmdDataEncoder<'_, '_, '_>,
+    ) -> Result<(), Error> {
+        // TODO: Check failsafe status
+
+        self.add_network(exchange, T::try_from(req)?, encoder)
+    }
+
+    fn add_network(
+        &self,
+        _exchange: &Exchange<'_>,
+        network: T,
+        encoder: CmdDataEncoder<'_, '_, '_>,
+    ) -> Result<(), Error> {
         self.networks.state.lock(|state| {
             let mut state = state.borrow_mut();
 
             let index = state
                 .networks
                 .iter()
-                .position(|conf| conf.ssid.as_str().as_bytes() == req.ssid.0);
+                .position(|nw| nw.network_id() == network.network_id());
 
             let writer = encoder.with_command(ResponseCommands::NetworkConfigResponse as _)?;
 
             if let Some(index) = index {
                 // Update
-                state.networks[index].ssid = core::str::from_utf8(req.ssid.0)
-                    .unwrap()
-                    .try_into()
-                    .unwrap();
-                state.networks[index].password = core::str::from_utf8(req.credentials.0)
-                    .unwrap()
-                    .try_into()
-                    .unwrap();
+                state.networks[index] = network;
 
                 state.changed = true;
                 self.networks.state_changed.notify();
 
-                info!("Updated network with SSID {}", state.networks[index].ssid);
+                info!(
+                    "Updated network with ID {}",
+                    state.networks[index].network_id()
+                );
 
                 writer.set(NetworkConfigResponse {
                     status: NetworkCommissioningStatus::Success,
@@ -237,26 +267,14 @@ where
                 })?;
             } else {
                 // Add
-                let network = WifiCredentials {
-                    // TODO
-                    ssid: core::str::from_utf8(req.ssid.0)
-                        .unwrap()
-                        .try_into()
-                        .unwrap(),
-                    password: core::str::from_utf8(req.credentials.0)
-                        .unwrap()
-                        .try_into()
-                        .unwrap(),
-                };
-
                 match state.networks.push(network) {
                     Ok(_) => {
                         state.changed = true;
                         self.networks.state_changed.notify();
 
                         info!(
-                            "Added network with SSID {}",
-                            state.networks.last().unwrap().ssid
+                            "Added network with ID {}",
+                            state.networks.last().unwrap().network_id()
                         );
 
                         writer.set(NetworkConfigResponse {
@@ -266,7 +284,10 @@ where
                         })?;
                     }
                     Err(network) => {
-                        warn!("Adding network with SSID {} failed: too many", network.ssid);
+                        warn!(
+                            "Adding network with ID {} failed: too many",
+                            network.network_id()
+                        );
 
                         writer.set(NetworkConfigResponse {
                             status: NetworkCommissioningStatus::BoundsExceeded,
@@ -295,7 +316,7 @@ where
             let index = state
                 .networks
                 .iter()
-                .position(|conf| conf.ssid.as_str().as_bytes() == req.network_id.0);
+                .position(|conf| conf.network_id().as_ref() == req.network_id.0);
 
             let writer = encoder.with_command(ResponseCommands::NetworkConfigResponse as _)?;
 
@@ -305,7 +326,7 @@ where
                 state.changed = true;
                 self.networks.state_changed.notify();
 
-                info!("Removed network with SSID {}", network.ssid);
+                info!("Removed network with ID {}", network.network_id());
 
                 writer.set(NetworkConfigResponse {
                     status: NetworkCommissioningStatus::Success,
@@ -314,7 +335,7 @@ where
                 })?;
             } else {
                 warn!(
-                    "Network with SSID {} not found",
+                    "Network with ID {} not found",
                     core::str::from_utf8(req.network_id.0).unwrap()
                 );
 
@@ -339,20 +360,20 @@ where
         // TODO: Check failsafe status
 
         // Non-concurrent commissioning scenario
-        // (i.e. only BLE is active, and the device BLE+Wifi co-exist
+        // (i.e. only BLE is active, and the device BLE+Wifi/Thread co-exist
         // driver is not running, or does not even exist)
 
-        let ssid = core::str::from_utf8(req.network_id.0).unwrap();
+        let network_id: T::NetworkId = req.network_id.0.try_into()?;
 
         info!(
-            "Request to connect to network with SSID {} received",
+            "Request to connect to network with ID {} received",
             core::str::from_utf8(req.network_id.0).unwrap(),
         );
 
         self.networks.state.lock(|state| {
             let mut state = state.borrow_mut();
 
-            state.connect_requested = Some(ssid.try_into().unwrap());
+            state.connect_requested = Some(network_id.clone());
             state.changed = true;
             self.networks.state_changed.notify();
         });
@@ -360,7 +381,7 @@ where
         let writer = encoder.with_command(ResponseCommands::ConnectNetworkResponse as _)?;
 
         // As per spec, return success even though though whether we'll be able to connect to the network
-        // will become apparent later, once we switch to Wifi
+        // will become apparent later, once we switch to Wifi/Thread
         writer.set(ConnectNetworkResponse {
             status: NetworkCommissioningStatus::Success,
             debug_text: None,
@@ -387,7 +408,7 @@ where
             let index = state
                 .networks
                 .iter()
-                .position(|conf| conf.ssid.as_str().as_bytes() == req.network_id.0);
+                .position(|conf| conf.network_id().as_ref() == req.network_id.0);
 
             let writer = encoder.with_command(ResponseCommands::NetworkConfigResponse as _)?;
 
@@ -406,7 +427,7 @@ where
                     self.networks.state_changed.notify();
 
                     info!(
-                        "Network with SSID {} reordered to index {}",
+                        "Network with ID {} reordered to index {}",
                         core::str::from_utf8(req.network_id.0).unwrap(),
                         req.index
                     );
@@ -418,7 +439,7 @@ where
                     })?;
                 } else {
                     warn!(
-                        "Reordering network with SSID {} to index {} failed: out of range",
+                        "Reordering network with ID {} to index {} failed: out of range",
                         core::str::from_utf8(req.network_id.0).unwrap(),
                         req.index
                     );
@@ -431,7 +452,7 @@ where
                 }
             } else {
                 warn!(
-                    "Network with SSID {} not found",
+                    "Network with ID {} not found",
                     core::str::from_utf8(req.network_id.0).unwrap()
                 );
 
@@ -448,9 +469,10 @@ where
     }
 }
 
-impl<'a, const N: usize, M> Handler for WifiNwCommCluster<'a, N, M>
+impl<'a, const N: usize, M, T> Handler for WirelessNwCommCluster<'a, N, M, T>
 where
     M: RawMutex,
+    T: NetworkCredentials + Clone + for<'b> FromTLV<'b> + ToTLV,
 {
     fn read(
         &self,
@@ -458,7 +480,7 @@ where
         attr: &AttrDetails,
         encoder: AttrDataEncoder,
     ) -> Result<(), Error> {
-        WifiNwCommCluster::read(self, exchange, attr, encoder)
+        WirelessNwCommCluster::read(self, exchange, attr, encoder)
     }
 
     fn invoke(
@@ -468,13 +490,18 @@ where
         data: &TLVElement,
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
-        WifiNwCommCluster::invoke(self, exchange, cmd, data, encoder)
+        WirelessNwCommCluster::invoke(self, exchange, cmd, data, encoder)
     }
 }
 
-impl<'a, const N: usize, M> NonBlockingHandler for WifiNwCommCluster<'a, N, M> where M: RawMutex {}
+impl<'a, const N: usize, M, T> NonBlockingHandler for WirelessNwCommCluster<'a, N, M, T>
+where
+    M: RawMutex,
+    T: NetworkCredentials + Clone + for<'b> FromTLV<'b> + ToTLV,
+{
+}
 
-// impl ChangeNotifier<()> for WifiCommCluster {
+// impl ChangeNotifier<()> for WirelessCommCluster {
 //     fn consume_change(&mut self) -> Option<()> {
 //         self.data_ver.consume_change(())
 //     }

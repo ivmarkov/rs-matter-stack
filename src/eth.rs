@@ -42,7 +42,11 @@ where
 {
     const INIT: Self = Self { embedding: E::INIT };
 
+    type PersistContext<'a> = ();
+
     type Embedding = E;
+
+    fn persist_context(&self) -> Self::PersistContext<'_> {}
 
     fn embedding(&self) -> &Self::Embedding {
         &self.embedding

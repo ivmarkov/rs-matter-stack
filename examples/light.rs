@@ -24,7 +24,7 @@ use rs_matter::utils::sync::blocking::raw::StdRawMutex;
 use rs_matter::BasicCommData;
 
 use rs_matter_stack::modem::DummyLinuxModem;
-use rs_matter_stack::persist::{DirKvBlobStore, KvBlobBuf, KvPersist};
+use rs_matter_stack::persist::{new_kv, DirKvBlobStore, KvBlobBuf};
 use rs_matter_stack::WifiBleMatterStack;
 
 use static_cell::StaticCell;
@@ -91,7 +91,7 @@ fn main() -> Result<(), Error> {
     // not being very intelligent w.r.t. stack usage in async functions
     let mut matter = pin!(stack.run(
         // Will persist in `<tmp-dir>/rs-matter`
-        KvPersist::new_wifi_ble(DirKvBlobStore::new_default(), stack),
+        new_kv(DirKvBlobStore::new_default(), stack),
         // A Linux-specific modem using BlueZ
         DummyLinuxModem::default(),
         // Our `AsyncHandler` + `AsyncMetadata` impl

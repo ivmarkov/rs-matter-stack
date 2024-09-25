@@ -41,7 +41,10 @@ use crate::network::Network;
 use crate::persist::Persist;
 
 pub use eth::*;
-pub use wifible::*;
+pub use wireless::{
+    ThreadBleMatterStack, ThreadBleRootEndpointHandler, WifiBleMatterStack,
+    WifiBleRootEndpointHandler, WirelessBle,
+};
 
 #[cfg(feature = "std")]
 #[allow(unused_imports)]
@@ -52,16 +55,15 @@ extern crate std;
 #[macro_use]
 extern crate alloc;
 
-mod eth;
+pub mod eth;
 #[cfg(feature = "edge-mdns")]
 pub mod mdns;
-pub mod modem;
+//pub mod modem;
 pub mod netif;
 pub mod network;
 pub mod persist;
-mod udp;
-pub mod wifi;
-mod wifible;
+pub mod udp;
+pub mod wireless;
 
 const MAX_SUBSCRIPTIONS: usize = 3;
 const MAX_IM_BUFFERS: usize = 10;
