@@ -42,7 +42,7 @@ use crate::persist::Persist;
 
 pub use eth::*;
 pub use wireless::{
-    ThreadBleMatterStack, ThreadRootEndpointHandler, WifiBleMatterStack, WifiRootEndpointHandler,
+    ThreadMatterStack, ThreadRootEndpointHandler, WifiMatterStack, WifiRootEndpointHandler,
     WirelessBle,
 };
 

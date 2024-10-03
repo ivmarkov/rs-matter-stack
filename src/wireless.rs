@@ -136,8 +136,8 @@ where
     }
 }
 
-pub type WifiBleMatterStack<'a, M, E> = MatterStack<'a, WirelessBle<M, WifiCredentials, E>>;
-pub type ThreadBleMatterStack<'a, M, E> = MatterStack<'a, WirelessBle<M, ThreadCredentials, E>>;
+pub type WifiMatterStack<'a, M, E> = MatterStack<'a, WirelessBle<M, WifiCredentials, E>>;
+pub type ThreadMatterStack<'a, M, E> = MatterStack<'a, WirelessBle<M, ThreadCredentials, E>>;
 
 impl<'a, M, T, E> MatterStack<'a, WirelessBle<M, T, E>>
 where
