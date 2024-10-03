@@ -16,6 +16,8 @@ use rs_matter::utils::sync::Notification;
 
 use crate::persist::NetworkPersist;
 
+use super::proxy::ControllerProxy;
+use super::traits::WirelessData;
 use super::NetworkCredentials;
 
 pub(crate) struct NetworkStatus<I> {
@@ -163,23 +165,26 @@ where
 pub struct NetworkContext<const N: usize, M, T>
 where
     M: RawMutex,
-    T: NetworkCredentials,
+    T: WirelessData,
 {
-    pub(crate) state: Mutex<M, RefCell<NetworkState<N, T>>>,
+    pub(crate) state: Mutex<M, RefCell<NetworkState<N, T::NetworkCredentials>>>,
     pub(crate) state_changed: Notification<M>,
+    pub(crate) controller_proxy: ControllerProxy<M, T>,
     pub(crate) network_connect_requested: Notification<M>,
 }
 
 impl<const N: usize, M, T> NetworkContext<N, M, T>
 where
     M: RawMutex,
-    T: NetworkCredentials + Clone,
+    T: WirelessData,
+    T::NetworkCredentials: Clone,
 {
     /// Create a new instance.
     pub const fn new() -> Self {
         Self {
             state: Mutex::new(RefCell::new(NetworkState::new())),
             state_changed: Notification::new(),
+            controller_proxy: ControllerProxy::new(),
             network_connect_requested: Notification::new(),
         }
     }
@@ -189,6 +194,7 @@ where
         init!(Self {
             state <- Mutex::init(RefCell::init(NetworkState::init())),
             state_changed: Notification::new(),
+            controller_proxy <- ControllerProxy::init(),
             network_connect_requested: Notification::new(),
         })
     }
@@ -201,7 +207,7 @@ where
     /// Load the state from a byte slice.
     pub fn load(&self, data: &[u8]) -> Result<(), Error>
     where
-        T: for<'a> FromTLV<'a>,
+        T::NetworkCredentials: for<'a> FromTLV<'a>,
     {
         self.state.lock(|state| state.borrow_mut().load(data))
     }
@@ -209,7 +215,7 @@ where
     /// Store the state into a byte slice.
     pub fn store<'m>(&self, buf: &'m mut [u8]) -> Result<Option<&'m [u8]>, Error>
     where
-        T: ToTLV,
+        T::NetworkCredentials: ToTLV,
     {
         self.state.lock(|state| state.borrow_mut().store(buf))
     }
@@ -261,7 +267,8 @@ where
 impl<const N: usize, M, T> Default for NetworkContext<N, M, T>
 where
     M: RawMutex,
-    T: NetworkCredentials + Clone + for<'a> FromTLV<'a> + ToTLV,
+    T: WirelessData,
+    T::NetworkCredentials: Clone + for<'a> FromTLV<'a> + ToTLV,
 {
     fn default() -> Self {
         Self::new()
@@ -271,7 +278,8 @@ where
 impl<const N: usize, M, T> NetworkPersist for &NetworkContext<N, M, T>
 where
     M: RawMutex,
-    T: NetworkCredentials + Clone + for<'a> FromTLV<'a> + ToTLV,
+    T: WirelessData,
+    T::NetworkCredentials: Clone + for<'a> FromTLV<'a> + ToTLV,
 {
     async fn reset(&mut self) -> Result<(), Error> {
         NetworkContext::reset(self);

@@ -19,6 +19,7 @@ use rs_matter::tlv::{FromTLV, Octets, TLVElement, TLVTag, TLVWrite, ToTLV};
 use rs_matter::transport::exchange::Exchange;
 
 use super::store::NetworkContext;
+use super::traits::WirelessData;
 use super::NetworkCredentials;
 
 /// A cluster implementing the Matter Network Commissioning Cluster
@@ -28,7 +29,8 @@ use super::NetworkCredentials;
 pub struct WirelessNwCommCluster<'a, const N: usize, M, T>
 where
     M: RawMutex,
-    T: NetworkCredentials + Clone + for<'b> FromTLV<'b> + ToTLV,
+    T: WirelessData,
+    T::NetworkCredentials: Clone + for<'b> FromTLV<'b> + ToTLV,
 {
     data_ver: Dataver,
     networks: &'a NetworkContext<N, M, T>,
@@ -37,7 +39,8 @@ where
 impl<'a, const N: usize, M, T> WirelessNwCommCluster<'a, N, M, T>
 where
     M: RawMutex,
-    T: NetworkCredentials + Clone + for<'b> FromTLV<'b> + ToTLV,
+    T: WirelessData,
+    T::NetworkCredentials: Clone + for<'b> FromTLV<'b> + ToTLV,
 {
     /// Create a new instance.
     pub const fn new(data_ver: Dataver, networks: &'a NetworkContext<N, M, T>) -> Self {
@@ -53,7 +56,7 @@ where
     ) -> Result<(), Error> {
         if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
-                if T::is_wifi() {
+                if T::NetworkCredentials::is_wifi() {
                     WIFI_CLUSTER.read(attr.attr_id, writer)
                 } else {
                     THR_CLUSTER.read(attr.attr_id, writer)
@@ -218,7 +221,7 @@ where
     ) -> Result<(), Error> {
         // TODO: Check failsafe status
 
-        self.add_network(exchange, T::try_from(req)?, encoder)
+        self.add_network(exchange, T::NetworkCredentials::try_from(req)?, encoder)
     }
 
     fn add_thread_network(
@@ -229,13 +232,13 @@ where
     ) -> Result<(), Error> {
         // TODO: Check failsafe status
 
-        self.add_network(exchange, T::try_from(req)?, encoder)
+        self.add_network(exchange, T::NetworkCredentials::try_from(req)?, encoder)
     }
 
     fn add_network(
         &self,
         _exchange: &Exchange<'_>,
-        network: T,
+        network: T::NetworkCredentials,
         encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
         self.networks.state.lock(|state| {
@@ -363,7 +366,8 @@ where
         // (i.e. only BLE is active, and the device BLE+Wifi/Thread co-exist
         // driver is not running, or does not even exist)
 
-        let network_id: T::NetworkId = req.network_id.0.try_into()?;
+        let network_id: <T::NetworkCredentials as NetworkCredentials>::NetworkId =
+            req.network_id.0.try_into()?;
 
         info!(
             "Request to connect to network with ID {} received",
@@ -472,7 +476,8 @@ where
 impl<'a, const N: usize, M, T> Handler for WirelessNwCommCluster<'a, N, M, T>
 where
     M: RawMutex,
-    T: NetworkCredentials + Clone + for<'b> FromTLV<'b> + ToTLV,
+    T: WirelessData,
+    T::NetworkCredentials: Clone + for<'b> FromTLV<'b> + ToTLV,
 {
     fn read(
         &self,
@@ -497,7 +502,8 @@ where
 impl<'a, const N: usize, M, T> NonBlockingHandler for WirelessNwCommCluster<'a, N, M, T>
 where
     M: RawMutex,
-    T: NetworkCredentials + Clone + for<'b> FromTLV<'b> + ToTLV,
+    T: WirelessData,
+    T::NetworkCredentials: Clone + for<'b> FromTLV<'b> + ToTLV,
 {
 }
 

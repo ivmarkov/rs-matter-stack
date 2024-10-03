@@ -11,6 +11,7 @@ use rs_matter::error::Error;
 use crate::wireless::NetworkCredentials;
 
 use super::store::{NetworkContext, NetworkStatus};
+use super::traits::WirelessData;
 use super::Controller;
 
 /// A generic Wireless manager.
@@ -26,15 +27,15 @@ use super::Controller;
 /// networks in case of a failure.
 ///
 /// The comminication with the wireless device is done through the `WirelessController` trait.
-pub struct WirelessManager<W>(W);
+pub struct WirelessManager<T>(T);
 
-impl<W> WirelessManager<W>
+impl<T> WirelessManager<T>
 where
-    W: Controller,
-    W::NetworkCredentials: Clone,
+    T: Controller,
+    <T::Data as WirelessData>::NetworkCredentials: Clone,
 {
     /// Create a new wireless manager.
-    pub const fn new(controller: W) -> Self {
+    pub const fn new(controller: T) -> Self {
         Self(controller)
     }
 
@@ -44,7 +45,7 @@ where
     /// and will retry the connection in case of a failure.
     pub async fn run<const N: usize, M>(
         &mut self,
-        context: &NetworkContext<N, M, W::NetworkCredentials>,
+        context: &NetworkContext<N, M, T::Data>,
     ) -> Result<(), Error>
     where
         M: RawMutex,
@@ -71,8 +72,8 @@ where
 
     async fn connect_with_retries<const N: usize, M>(
         &mut self,
-        creds: &W::NetworkCredentials,
-        context: &NetworkContext<N, M, W::NetworkCredentials>,
+        creds: &<T::Data as WirelessData>::NetworkCredentials,
+        context: &NetworkContext<N, M, T::Data>,
     ) -> Result<(), Error>
     where
         M: RawMutex,
@@ -144,7 +145,10 @@ where
         }
     }
 
-    async fn connect(&mut self, creds: &W::NetworkCredentials) -> Result<(), Error> {
+    async fn connect(
+        &mut self,
+        creds: &<T::Data as WirelessData>::NetworkCredentials,
+    ) -> Result<(), Error> {
         info!("Connecting to network with ID {}", creds.network_id());
 
         // TODO

@@ -8,7 +8,6 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use log::info;
 
-use proxy::ControllerProxy;
 use rs_matter::data_model::objects::{
     AsyncHandler, AsyncMetadata, Dataver, Endpoint, HandlerCompat,
 };
@@ -26,7 +25,9 @@ use rs_matter::transport::network::btp::{Btp, BtpContext, GattPeripheral};
 use rs_matter::transport::network::NoNetwork;
 use rs_matter::utils::init::{init, Init};
 use rs_matter::utils::select::Coalesce;
-use traits::{Wireless, WirelessDTOs};
+use traits::{
+    ConcurrencyMode, Thread, ThreadData, Wifi, WifiData, Wireless, WirelessConfig, WirelessData,
+};
 
 use crate::netif::Netif;
 use crate::network::{Embedding, Network};
@@ -58,17 +59,19 @@ const MAX_WIRELESS_NETWORKS: usize = 2;
 pub struct WirelessBle<M, T, E = ()>
 where
     M: RawMutex,
-    T: NetworkCredentials + Clone + for<'a> FromTLV<'a> + ToTLV,
+    T: WirelessConfig,
+    <T::Data as WirelessData>::NetworkCredentials: Clone + for<'a> FromTLV<'a> + ToTLV,
 {
     btp_context: BtpContext<M>,
-    network_context: NetworkContext<MAX_WIRELESS_NETWORKS, M, T>,
+    network_context: NetworkContext<MAX_WIRELESS_NETWORKS, M, T::Data>,
     embedding: E,
 }
 
 impl<M, T, E> Default for WirelessBle<M, T, E>
 where
     M: RawMutex,
-    T: NetworkCredentials + Clone + for<'a> FromTLV<'a> + ToTLV,
+    T: WirelessConfig,
+    <T::Data as WirelessData>::NetworkCredentials: Clone + for<'a> FromTLV<'a> + ToTLV,
     E: Embedding,
 {
     fn default() -> Self {
@@ -79,7 +82,8 @@ where
 impl<M, T, E> WirelessBle<M, T, E>
 where
     M: RawMutex,
-    T: NetworkCredentials + Clone + for<'a> FromTLV<'a> + ToTLV,
+    T: WirelessConfig,
+    <T::Data as WirelessData>::NetworkCredentials: Clone + for<'a> FromTLV<'a> + ToTLV,
     E: Embedding,
 {
     /// Creates a new instance of the `WirelessBle` network type.
@@ -101,7 +105,7 @@ where
     }
 
     /// Return a reference to the BTP context.
-    pub fn network_context(&self) -> &NetworkContext<MAX_WIRELESS_NETWORKS, M, T> {
+    pub fn network_context(&self) -> &NetworkContext<MAX_WIRELESS_NETWORKS, M, T::Data> {
         &self.network_context
     }
 }
@@ -109,12 +113,13 @@ where
 impl<M, T, E> Network for WirelessBle<M, T, E>
 where
     M: RawMutex + 'static,
-    T: NetworkCredentials + Clone + for<'a> FromTLV<'a> + ToTLV,
+    T: WirelessConfig,
+    <T::Data as WirelessData>::NetworkCredentials: Clone + for<'a> FromTLV<'a> + ToTLV,
     E: Embedding + 'static,
 {
     const INIT: Self = Self::new();
 
-    type PersistContext<'a> = &'a NetworkContext<MAX_WIRELESS_NETWORKS, M, T>;
+    type PersistContext<'a> = &'a NetworkContext<MAX_WIRELESS_NETWORKS, M, T::Data>;
 
     type Embedding = E;
 
@@ -137,7 +142,8 @@ pub type ThreadBleMatterStack<'a, M, E> = MatterStack<'a, WirelessBle<M, ThreadC
 impl<'a, M, T, E> MatterStack<'a, WirelessBle<M, T, E>>
 where
     M: RawMutex + Send + Sync + 'static,
-    T: NetworkCredentials + Clone + for<'t> FromTLV<'t> + ToTLV,
+    T: WirelessConfig,
+    <T::Data as WirelessData>::NetworkCredentials: Clone + for<'t> FromTLV<'t> + ToTLV,
     E: Embedding + 'static,
 {
     /// Resets the Matter instance to the factory defaults putting it into a
@@ -155,16 +161,15 @@ where
         &'static self,
         ble: B,
         wireless: W,
-        proxy: &ControllerProxy<W>,
         persist: P,
         handler: H,
         user: U,
     ) -> Result<(), Error>
     where
         B: Ble,
-        W: Wireless<NetworkCredentials = T>,
-        W::ScanResult: Clone,
-        W::Stats: Default,
+        W: Wireless<Data = T::Data>,
+        <W::Data as WirelessData>::ScanResult: Clone,
+        <W::Data as WirelessData>::Stats: Default,
         P: Persist,
         H: AsyncHandler + AsyncMetadata,
         U: Future<Output = Result<(), Error>>,
@@ -175,7 +180,7 @@ where
 
         self.matter().reset_transport()?;
 
-        let mut net_task = pin!(self.run_net(ble, wireless, proxy));
+        let mut net_task = pin!(self.run_net(ble, wireless));
         let mut handler_task = pin!(self.run_handlers(persist, handler));
         let mut user_task = pin!(user);
 
@@ -184,22 +189,17 @@ where
             .await
     }
 
-    async fn run_net<'d, B, W>(
-        &'static self,
-        mut ble: B,
-        mut wireless: W,
-        proxy: &ControllerProxy<W>,
-    ) -> Result<(), Error>
+    async fn run_net<'d, B, W>(&'static self, mut ble: B, mut wireless: W) -> Result<(), Error>
     where
         B: Ble,
-        W: Wireless<NetworkCredentials = T>,
-        W::ScanResult: Clone,
-        W::Stats: Default,
+        W: Wireless<Data = T::Data>,
+        <W::Data as WirelessData>::ScanResult: Clone,
+        <W::Data as WirelessData>::Stats: Default,
     {
-        if wireless.supports_concurrent_connection() {
+        if T::CONCURRENT {
             let (mut controller, mut netif) = wireless.start().await?;
 
-            let mut mgr = WirelessManager::new(proxy);
+            let mut mgr = WirelessManager::new(&self.network.network_context.controller_proxy);
 
             info!("Wireless driver started");
 
@@ -217,7 +217,11 @@ where
 
                     let mut net_task = pin!(self.run_comm_net(&btp, &mut netif));
                     let mut mgr_task = pin!(mgr.run(&self.network.network_context));
-                    let mut proxy_task = pin!(proxy.process_with(&mut controller));
+                    let mut proxy_task = pin!(self
+                        .network
+                        .network_context
+                        .controller_proxy
+                        .process_with(&mut controller));
 
                     select3(&mut net_task, &mut mgr_task, &mut proxy_task)
                         .coalesce()
@@ -231,7 +235,11 @@ where
                         Option::<(NoNetwork, NoNetwork)>::None
                     ));
                     let mut mgr_task = pin!(mgr.run(&self.network.network_context));
-                    let mut proxy_task = pin!(proxy.process_with(&mut controller));
+                    let mut proxy_task = pin!(self
+                        .network
+                        .network_context
+                        .controller_proxy
+                        .process_with(&mut controller));
 
                     select3(&mut net_task, &mut mgr_task, &mut proxy_task)
                         .coalesce()
@@ -256,7 +264,7 @@ where
 
                 let (mut controller, mut netif) = wireless.start().await?;
 
-                let mut mgr = WirelessManager::new(proxy);
+                let mut mgr = WirelessManager::new(&self.network.network_context.controller_proxy);
 
                 info!("Wireless driver started");
 
@@ -268,7 +276,11 @@ where
                     Option::<(NoNetwork, NoNetwork)>::None
                 ));
                 let mut mgr_task = pin!(mgr.run(&self.network.network_context));
-                let mut proxy_task = pin!(proxy.process_with(&mut controller));
+                let mut proxy_task = pin!(self
+                    .network
+                    .network_context
+                    .controller_proxy
+                    .process_with(&mut controller));
 
                 select3(&mut net_task, &mut mgr_task, &mut proxy_task)
                     .coalesce()
@@ -330,9 +342,10 @@ where
     }
 }
 
-impl<'a, M, E> MatterStack<'a, WirelessBle<M, WifiCredentials, E>>
+impl<'a, M, C, E> MatterStack<'a, WirelessBle<M, Wifi<C>, E>>
 where
     M: RawMutex + Send + Sync + 'static,
+    C: ConcurrencyMode,
     E: Embedding + 'static,
 {
     /// Return a metadata for the root (Endpoint 0) of the Matter Node
@@ -343,17 +356,7 @@ where
 
     /// Return a handler for the root (Endpoint 0) of the Matter Node
     /// configured for BLE+Wifi network.
-    pub fn root_handler<W>(
-        &self,
-        controller_proxy: &ControllerProxy<W>,
-    ) -> WifiBleRootEndpointHandler<'_, M>
-    where
-        W: WirelessDTOs<NetworkCredentials = WifiCredentials>,
-        W::ScanResult: Clone,
-        W::Stats: Default,
-    {
-        let supports_concurrent_connection = controller_proxy.supports_concurrent_connection();
-
+    pub fn root_handler(&self) -> WifiRootEndpointHandler<'_, M> {
         handler(
             0,
             HandlerCompat(comm::WirelessNwCommCluster::new(
@@ -372,15 +375,16 @@ where
                     rssi: 0,
                 },
             )),
-            supports_concurrent_connection,
+            C::CONCURRENT,
             self.matter().rand(),
         )
     }
 }
 
-impl<'a, M, E> MatterStack<'a, WirelessBle<M, ThreadCredentials, E>>
+impl<'a, M, C, E> MatterStack<'a, WirelessBle<M, Thread<C>, E>>
 where
     M: RawMutex + Send + Sync + 'static,
+    C: ConcurrencyMode,
     E: Embedding + 'static,
 {
     /// Return a metadata for the root (Endpoint 0) of the Matter Node
@@ -391,17 +395,7 @@ where
 
     /// Return a handler for the root (Endpoint 0) of the Matter Node
     /// configured for BLE+Wifi network.
-    pub fn root_handler<P, W>(
-        &self,
-        controller_proxy: &ControllerProxy<W>,
-    ) -> ThreadBleRootEndpointHandler<'_, M>
-    where
-        W: Wireless<NetworkCredentials = WifiCredentials>,
-        W::ScanResult: Clone,
-        W::Stats: Default,
-    {
-        let supports_concurrent_connection = controller_proxy.supports_concurrent_connection();
-
+    pub fn root_handler<P>(&self) -> ThreadRootEndpointHandler<'_, M> {
         handler(
             0,
             HandlerCompat(comm::WirelessNwCommCluster::new(
@@ -414,22 +408,22 @@ where
                 // TODO: Update with actual information
                 todo!(),
             )),
-            supports_concurrent_connection,
+            C::CONCURRENT,
             self.matter().rand(),
         )
     }
 }
 
-/// The root endpoint handler for a BLE+Wifi network.
-pub type WifiBleRootEndpointHandler<'a, M> = RootEndpointHandler<
+/// The root endpoint handler for a Wifi network.
+pub type WifiRootEndpointHandler<'a, M> = RootEndpointHandler<
     'a,
-    HandlerCompat<comm::WirelessNwCommCluster<'a, MAX_WIRELESS_NETWORKS, M, WifiCredentials>>,
+    HandlerCompat<comm::WirelessNwCommCluster<'a, MAX_WIRELESS_NETWORKS, M, WifiData>>,
     HandlerCompat<WifiNwDiagCluster>,
 >;
 
-/// The root endpoint handler for a BLE+Thread network.
-pub type ThreadBleRootEndpointHandler<'a, M> = RootEndpointHandler<
+/// The root endpoint handler for a Thread network.
+pub type ThreadRootEndpointHandler<'a, M> = RootEndpointHandler<
     'a,
-    HandlerCompat<comm::WirelessNwCommCluster<'a, MAX_WIRELESS_NETWORKS, M, ThreadCredentials>>,
+    HandlerCompat<comm::WirelessNwCommCluster<'a, MAX_WIRELESS_NETWORKS, M, ThreadData>>,
     HandlerCompat<ThreadNwDiagCluster<'a>>,
 >;
