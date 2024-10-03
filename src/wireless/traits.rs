@@ -178,11 +178,6 @@ impl NetworkCredentials for ThreadCredentials {
 
 /// A trait representing a wireless controller for either Wifi or Thread networks.
 pub trait Controller: WirelessDTOs {
-    /// Return `true` if this wireless controller can support simultaneous connections
-    /// to the operational network (Wifi or Thread) on one hand, and the BLE commissioning network
-    /// on the other.
-    fn supports_concurrent_connection(&self) -> bool;
-
     /// Scan for available networks
     async fn scan<F>(
         &mut self,
@@ -208,10 +203,6 @@ impl<T> Controller for &mut T
 where
     T: Controller,
 {
-    fn supports_concurrent_connection(&self) -> bool {
-        T::supports_concurrent_connection(*self)
-    }
-
     async fn scan<F>(
         &mut self,
         network_id: Option<&<Self::NetworkCredentials as NetworkCredentials>::NetworkId>,
@@ -273,6 +264,11 @@ where
     type NetworkCredentials = T;
     type ScanResult = S;
     type Stats = A;
+
+    fn supports_concurrent_connection(&self) -> bool {
+        // Disconnected controllers obvious do not support concurrent connections
+        false
+    }
 }
 
 impl<T, S, A> Controller for DisconnectedController<T, S, A>
@@ -281,11 +277,6 @@ where
     S: Clone,
     A: Clone,
 {
-    fn supports_concurrent_connection(&self) -> bool {
-        // Disconnected controllers obvious do not support concurrent connections
-        false
-    }
-
     async fn scan<F>(
         &mut self,
         _network_id: Option<&T::NetworkId>,
@@ -323,6 +314,12 @@ pub trait WirelessDTOs {
 
     /// The type of the statistics (they are different for Wifi vs Thread)
     type Stats;
+
+    /// Return `true` if this wireless interface can support simultaneous connections
+    /// to the operational network (Wifi or Thread) on one hand, and the BLE commissioning network
+    /// on the other.
+    // TODO: Make it async
+    fn supports_concurrent_connection(&self) -> bool;
 }
 
 /// A factory trait for constructing the wireless controller and its network interface
@@ -341,9 +338,6 @@ pub trait Wireless: WirelessDTOs {
     where
         Self: 'a;
 
-    /// Return `true` if this wireless controller can support simultaneous connections
-    fn supports_concurrent_connection(&mut self) -> bool;
-
     /// Setup the radio to operate in wireless (Wifi or Thread) mode and return the wireless controller
     /// and the network interface.
     async fn start(&mut self) -> Result<(Self::Controller<'_>, Self::Netif<'_>), Error>;
@@ -356,6 +350,10 @@ where
     type NetworkCredentials = T::NetworkCredentials;
     type ScanResult = T::ScanResult;
     type Stats = T::Stats;
+
+    fn supports_concurrent_connection(&self) -> bool {
+        T::supports_concurrent_connection(*self)
+    }
 }
 
 impl<T> Wireless for &mut T
@@ -364,10 +362,6 @@ where
 {
     type Controller<'a> = T::Controller<'a> where Self: 'a;
     type Netif<'a> = T::Netif<'a> where Self: 'a;
-
-    fn supports_concurrent_connection(&mut self) -> bool {
-        T::supports_concurrent_connection(*self)
-    }
 
     async fn start(&mut self) -> Result<(Self::Controller<'_>, Self::Netif<'_>), Error> {
         T::start(self).await

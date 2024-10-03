@@ -1,17 +1,21 @@
+//! `Controller` proxy for bridging the wireless clusters with the actual wireless controller.
+//!
+//! Necessary because the wireless clusters have a different life-cycle from the controller.
+
 use core::cell::RefCell;
 use core::pin::pin;
 
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
 use heapless::Vec;
-use rs_matter::{
-    error::Error,
-    utils::sync::{IfMutex, Signal},
-};
+
+use rs_matter::error::Error;
+use rs_matter::utils::sync::{IfMutex, Signal};
 
 use super::traits::{Controller, NetworkCredentials, WirelessDTOs};
 
-pub enum ControllerExchange<T>
+enum ControllerExchange<T>
 where
     T: WirelessDTOs,
 {
@@ -47,6 +51,13 @@ where
     }
 }
 
+/// A proxy for a wireless controller.
+///
+/// Solves lifetime/lifecycle issues between the wireless clusters and the controller -
+/// in other words, allows the proxy to be created earlier and live longer than the controller.
+///
+/// When there is no controller (i.e. the wireless network is disconnected), the proxy will ignore
+/// some commands, return default values for others (statistics) and will error out on the remaining.
 pub struct ControllerProxy<T>
 where
     T: WirelessDTOs,
@@ -61,6 +72,7 @@ impl<T> ControllerProxy<T>
 where
     T: WirelessDTOs,
 {
+    /// Create a new controller proxy.
     pub const fn new(supports_concurrent_connection: bool) -> Self {
         Self {
             supports_concurrent_connection,
@@ -70,6 +82,7 @@ where
         }
     }
 
+    /// Connect the proxy to an active controller
     pub async fn process_with<C>(&self, mut controller: C) -> Result<(), Error>
     where
         C: Controller<
@@ -156,36 +169,31 @@ where
         }
     }
 
-    async fn command(&self, command: ControllerExchange<T>) -> bool {
-        self.pipe(
-            |data| matches!(*data, ControllerExchange::Empty),
-            |data| *data = command,
-        )
-        .await
-    }
+    async fn command(&self, command: ControllerExchange<T>) -> Option<ControllerExchange<T>> {
+        let connected = self
+            .pipe(
+                |data| matches!(*data, ControllerExchange::Empty),
+                |data| *data = command,
+            )
+            .await;
 
-    async fn reply_with<F>(&self, process: F) -> Result<ControllerExchange<T>, ()>
-    where
-        F: FnOnce(&mut ControllerExchange<T>) -> ControllerExchange<T>,
-    {
+        if !connected {
+            return None;
+        }
+
         let mut reply = None;
 
         let connected = self
             .pipe(ControllerExchange::is_reply, |data| {
-                reply = Some(process(data));
+                reply = Some(core::mem::replace(data, ControllerExchange::Empty));
             })
             .await;
 
-        if connected {
-            Ok(reply.unwrap())
-        } else {
-            Err(())
+        if !connected {
+            return None;
         }
-    }
 
-    async fn reply(&self) -> Result<ControllerExchange<T>, ()> {
-        self.reply_with(|data| core::mem::replace(data, ControllerExchange::Empty))
-            .await
+        reply
     }
 }
 
@@ -198,6 +206,10 @@ where
     type NetworkCredentials = T::NetworkCredentials;
     type ScanResult = T::ScanResult;
     type Stats = T::Stats;
+
+    fn supports_concurrent_connection(&self) -> bool {
+        self.supports_concurrent_connection
+    }
 }
 
 impl<T> Controller for &ControllerProxy<T>
@@ -206,10 +218,6 @@ where
     T::ScanResult: Clone,
     T::Stats: Default,
 {
-    fn supports_concurrent_connection(&self) -> bool {
-        self.supports_concurrent_connection
-    }
-
     async fn scan<F>(
         &mut self,
         network_id: Option<&<Self::NetworkCredentials as NetworkCredentials>::NetworkId>,
@@ -218,18 +226,12 @@ where
     where
         F: FnMut(Option<&Self::ScanResult>),
     {
-        if !self
+        let reply = self
             .command(ControllerExchange::Scan(network_id.cloned()))
-            .await
-        {
-            callback(None);
-            return Ok(());
-        }
-
-        let reply = self.reply().await;
+            .await;
 
         match reply {
-            Ok(ControllerExchange::ScanResult(result)) => match result {
+            Some(ControllerExchange::ScanResult(result)) => match result {
                 Ok(result) => {
                     result.iter().for_each(|result| callback(Some(result)));
                     callback(None);
@@ -238,8 +240,8 @@ where
                 }
                 Err(e) => Err(e),
             },
-            Ok(_) => unreachable!(),
-            Err(_) => {
+            Some(_) => unreachable!(),
+            None => {
                 callback(None);
                 Ok(())
             }
@@ -247,49 +249,39 @@ where
     }
 
     async fn connect(&mut self, creds: &Self::NetworkCredentials) -> Result<(), Error> {
-        if !self
-            .command(ControllerExchange::Connect(creds.clone()))
-            .await
-        {
-            return Ok(());
-        }
+        // TODO: Fire a signal on network connection attempt, if in disconnected mode
+        // (non-concurrent commissioning)
 
-        let reply = self.reply().await;
+        let reply = self
+            .command(ControllerExchange::Connect(creds.clone()))
+            .await;
 
         match reply {
-            Ok(ControllerExchange::ConnectResult(result)) => result,
-            Ok(_) => unreachable!(),
-            Err(_) => Ok(()),
+            Some(ControllerExchange::ConnectResult(result)) => result,
+            Some(_) => unreachable!(),
+            None => Ok(()),
         }
     }
 
     async fn connected_network(
         &mut self,
     ) -> Result<Option<<Self::NetworkCredentials as NetworkCredentials>::NetworkId>, Error> {
-        if !self.command(ControllerExchange::ConnectedNetwork).await {
-            return Ok(None);
-        }
-
-        let reply = self.reply().await;
+        let reply = self.command(ControllerExchange::ConnectedNetwork).await;
 
         match reply {
-            Ok(ControllerExchange::ConnectedNetworkResult(result)) => result,
-            Ok(_) => unreachable!(),
-            Err(_) => Ok(None),
+            Some(ControllerExchange::ConnectedNetworkResult(result)) => result,
+            Some(_) => unreachable!(),
+            None => Ok(None),
         }
     }
 
     async fn stats(&mut self) -> Result<Self::Stats, Error> {
-        if !self.command(ControllerExchange::Stats).await {
-            return Ok(Default::default());
-        }
-
-        let reply = self.reply().await;
+        let reply = self.command(ControllerExchange::Stats).await;
 
         match reply {
-            Ok(ControllerExchange::StatsResult(result)) => result,
-            Ok(_) => unreachable!(),
-            Err(_) => Ok(Default::default()),
+            Some(ControllerExchange::StatsResult(result)) => result,
+            Some(_) => unreachable!(),
+            None => Ok(Default::default()),
         }
     }
 }

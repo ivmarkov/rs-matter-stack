@@ -18,16 +18,16 @@ where
     type ScanResult = AccessPointInfo;
 
     type Stats = ();
+
+    fn supports_concurrent_connection(&self) -> bool {
+        true // By default
+    }
 }
 
 impl<T> Controller for SvcWifi<T>
 where
     T: Wifi,
 {
-    fn supports_concurrent_connection(&self) -> bool {
-        true // By default
-    }
-
     async fn scan<F>(&mut self, network_id: Option<&WifiSsid>, mut callback: F) -> Result<(), Error>
     where
         F: FnMut(Option<&Self::ScanResult>),
