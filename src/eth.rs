@@ -3,6 +3,7 @@ use core::pin::pin;
 
 use edge_nal::UdpBind;
 
+use embassy_futures::select::select3;
 use log::info;
 
 use rs_matter::data_model::objects::{
@@ -15,7 +16,9 @@ use rs_matter::data_model::sdm::nw_commissioning::EthNwCommCluster;
 use rs_matter::data_model::sdm::{ethernet_nw_diagnostics, nw_commissioning};
 use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
+use rs_matter::transport::network::NoNetwork;
 use rs_matter::utils::init::{init, Init};
+use rs_matter::utils::select::Coalesce;
 
 use crate::netif::Netif;
 use crate::network::{Embedding, Network};
@@ -97,16 +100,6 @@ where
         Ok(())
     }
 
-    /// Enable basic commissioning over IP (mDNS) by setting up a PASE session and printing the pairing code and QR code.
-    ///
-    /// The method will return an error if there is not enough space in the buffer to print the pairing code and QR code
-    /// or if the PASE session could not be set up (due to another PASE session already being active, for example).
-    pub async fn enable_basic_commissioning(&self) -> Result<(), Error> {
-        self.matter()
-            .enable_basic_commissioning(DiscoveryCapabilities::IP, 0)
-            .await // TODO
-    }
-
     /// Run the Matter stack for Ethernet network.
     ///
     /// Parameters:
@@ -130,15 +123,26 @@ where
     {
         info!("Matter Stack memory: {}B", core::mem::size_of_val(self));
 
-        let mut user = pin!(user);
-
         // TODO persist.load().await?;
 
+        self.matter().reset_transport()?;
+
         if !self.is_commissioned().await? {
-            self.enable_basic_commissioning().await?;
+            self.matter()
+                .enable_basic_commissioning(DiscoveryCapabilities::IP, 0)
+                .await?; // TODO
         }
 
-        self.run_with_netif(persist, netif, handler, &mut user)
+        let mut net_task = pin!(self.run_oper_net(
+            netif,
+            core::future::pending(),
+            Option::<(NoNetwork, NoNetwork)>::None
+        ));
+        let mut handler_task = pin!(self.run_handlers(persist, handler));
+        let mut user_task = pin!(user);
+
+        select3(&mut net_task, &mut handler_task, &mut user_task)
+            .coalesce()
             .await
     }
 }

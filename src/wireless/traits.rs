@@ -3,6 +3,7 @@
 use core::fmt::{self, Display};
 use core::marker::PhantomData;
 
+use edge_nal::UdpBind;
 use rs_matter::data_model::sdm::nw_commissioning::{
     AddThreadNetworkRequest, AddWifiNetworkRequest, ThreadInterfaceScanResult,
     WiFiInterfaceScanResult,
@@ -11,10 +12,13 @@ use rs_matter::error::{Error, ErrorCode};
 use rs_matter::tlv::{FromTLV, OctetsOwned, ToTLV};
 use rs_matter::transport::network::btp::GattPeripheral;
 
+use crate::netif::Netif;
+
 /// A trait representing the credentials of a wireless network (Wifi or Thread).
 pub trait NetworkCredentials:
     for<'a> TryFrom<&'a AddWifiNetworkRequest<'a>, Error = Error>
     + for<'a> TryFrom<&'a AddThreadNetworkRequest<'a>, Error = Error>
+    + Clone
     + 'static
 {
     /// The ID of the network (SSID for Wifi and Extended PAN ID for Thread)
@@ -172,51 +176,19 @@ impl NetworkCredentials for ThreadCredentials {
     }
 }
 
-/// A trait representing a wireless interface statistics.
-pub trait WirelessStats {
-    /// The type of the statistics (they are different for Wifi vs Thread)
-    type Stats;
-
-    fn stats(&self) -> Self::Stats;
-}
-
-impl<T> WirelessStats for &mut T
-where
-    T: WirelessStats,
-{
-    type Stats = T::Stats;
-
-    fn stats(&self) -> Self::Stats {
-        T::stats(*self)
-    }
-}
-
-impl<T> WirelessStats for &T
-where
-    T: WirelessStats,
-{
-    type Stats = T::Stats;
-
-    fn stats(&self) -> Self::Stats {
-        T::stats(*self)
-    }
-}
-
 /// A trait representing a wireless controller for either Wifi or Thread networks.
-pub trait WirelessController {
-    /// The type of the network credentials (e.g. WifiCredentials or ThreadCredentials)
-    type NetworkCredentials: NetworkCredentials;
-
-    /// The type of the scan result (e.g. WiFiInterfaceScanResult or ThreadInterfaceScanResult)
-    type ScanResult;
-
+pub trait Controller: WirelessDTOs {
     /// Return `true` if this wireless controller can support simultaneous connections
     /// to the operational network (Wifi or Thread) on one hand, and the BLE commissioning network
     /// on the other.
     fn supports_concurrent_connection(&self) -> bool;
 
     /// Scan for available networks
-    async fn scan<F>(&mut self, network_id: Option<&[u8]>, callback: F) -> Result<(), Error>
+    async fn scan<F>(
+        &mut self,
+        network_id: Option<&<Self::NetworkCredentials as NetworkCredentials>::NetworkId>,
+        callback: F,
+    ) -> Result<(), Error>
     where
         F: FnMut(Option<&Self::ScanResult>);
 
@@ -226,21 +198,25 @@ pub trait WirelessController {
     /// Return the network ID of the currently connected network, if any
     async fn connected_network(
         &mut self,
-    ) -> Result<Option<&<Self::NetworkCredentials as NetworkCredentials>::NetworkId>, Error>;
+    ) -> Result<Option<<Self::NetworkCredentials as NetworkCredentials>::NetworkId>, Error>;
+
+    /// Return the current statistics of the wireless interface
+    async fn stats(&mut self) -> Result<Self::Stats, Error>;
 }
 
-impl<T> WirelessController for &mut T
+impl<T> Controller for &mut T
 where
-    T: WirelessController,
+    T: Controller,
 {
-    type NetworkCredentials = T::NetworkCredentials;
-    type ScanResult = T::ScanResult;
-
     fn supports_concurrent_connection(&self) -> bool {
         T::supports_concurrent_connection(*self)
     }
 
-    async fn scan<F>(&mut self, network_id: Option<&[u8]>, callback: F) -> Result<(), Error>
+    async fn scan<F>(
+        &mut self,
+        network_id: Option<&<Self::NetworkCredentials as NetworkCredentials>::NetworkId>,
+        callback: F,
+    ) -> Result<(), Error>
     where
         F: FnMut(Option<&Self::ScanResult>),
     {
@@ -253,56 +229,68 @@ where
 
     async fn connected_network(
         &mut self,
-    ) -> Result<Option<&<Self::NetworkCredentials as NetworkCredentials>::NetworkId>, Error> {
+    ) -> Result<Option<<Self::NetworkCredentials as NetworkCredentials>::NetworkId>, Error> {
         T::connected_network(*self).await
     }
+
+    async fn stats(&mut self) -> Result<Self::Stats, Error> {
+        T::stats(*self).await
+    }
 }
 
-/// A no-op controller for a wireless interface which is not started yet.
+/// A no-op controller.
 ///
-/// Useful when the commissioning mode is non-concurrent.
-pub struct DisconnectedController<T, S>(PhantomData<fn() -> T>, PhantomData<fn() -> S>);
+/// Useful for simulating non-concurrent wireless connectivity in tests and examples.
+pub struct DisconnectedController<T, S, A>(PhantomData<fn() -> T>, PhantomData<fn() -> S>, A);
 
-impl<T, S> Default for DisconnectedController<T, S> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<T, S> DisconnectedController<T, S> {
+impl<T, S, A> DisconnectedController<T, S, A> {
     /// Create a new disconnected controller
-    pub const fn new() -> Self {
-        Self(PhantomData, PhantomData)
+    pub const fn new(stats: A) -> Self {
+        Self(PhantomData, PhantomData, stats)
     }
 }
 
-impl<'a> DisconnectedController<WifiCredentials, WiFiInterfaceScanResult<'a>> {
+impl<'a, A> DisconnectedController<WifiCredentials, WiFiInterfaceScanResult<'a>, A> {
     /// Create a new disconnected controller for Wifi networks
-    pub const fn new_wifi() -> Self {
-        Self::new()
+    pub const fn new_wifi(stats: A) -> Self {
+        Self::new(stats)
     }
 }
 
-impl<'a> DisconnectedController<ThreadCredentials, ThreadInterfaceScanResult<'a>> {
+impl<'a, A> DisconnectedController<ThreadCredentials, ThreadInterfaceScanResult<'a>, A> {
     /// Create a new disconnected controller for Thread networks
-    pub const fn new_thread() -> Self {
-        Self::new()
+    pub const fn new_thread(stats: A) -> Self {
+        Self::new(stats)
     }
 }
 
-impl<T, S> WirelessController for DisconnectedController<T, S>
+impl<T, S, A> WirelessDTOs for DisconnectedController<T, S, A>
 where
     T: NetworkCredentials,
+    S: Clone,
+    A: Clone,
 {
     type NetworkCredentials = T;
     type ScanResult = S;
+    type Stats = A;
+}
 
+impl<T, S, A> Controller for DisconnectedController<T, S, A>
+where
+    T: NetworkCredentials,
+    S: Clone,
+    A: Clone,
+{
     fn supports_concurrent_connection(&self) -> bool {
         // Disconnected controllers obvious do not support concurrent connections
         false
     }
 
-    async fn scan<F>(&mut self, _network_id: Option<&[u8]>, _callback: F) -> Result<(), Error>
+    async fn scan<F>(
+        &mut self,
+        _network_id: Option<&T::NetworkId>,
+        _callback: F,
+    ) -> Result<(), Error>
     where
         F: FnMut(Option<&S>),
     {
@@ -316,52 +304,94 @@ where
         Ok(())
     }
 
-    async fn connected_network(&mut self) -> Result<Option<&T::NetworkId>, Error> {
+    async fn connected_network(&mut self) -> Result<Option<T::NetworkId>, Error> {
         Ok(None)
     }
-}
 
-/// Statistics for a wireless interface which is not started yet.
-///
-/// Useful when the commissioning mode is non-concurrent.
-pub struct DisconnectedStats<T>(T);
-
-impl<T> DisconnectedStats<T> {
-    /// Create a new disconnected stats
-    pub const fn new(stats: T) -> Self {
-        Self(stats)
+    async fn stats(&mut self) -> Result<A, Error> {
+        Ok(self.2.clone())
     }
 }
 
-impl<T> WirelessStats for DisconnectedStats<T>
+/// A trait representing all DTOs required for wireless network commissioning and operation.
+pub trait WirelessDTOs {
+    /// The type of the network credentials (e.g. WifiCredentials or ThreadCredentials)
+    type NetworkCredentials: NetworkCredentials + Clone;
+
+    /// The type of the scan result (e.g. WiFiInter faceScanResult or ThreadInterfaceScanResult)
+    type ScanResult: Clone;
+
+    /// The type of the statistics (they are different for Wifi vs Thread)
+    type Stats;
+}
+
+/// A factory trait for constructing the wireless controller and its network interface
+pub trait Wireless: WirelessDTOs {
+    /// The type of the controller
+    type Controller<'a>: Controller<
+        NetworkCredentials = Self::NetworkCredentials,
+        ScanResult = Self::ScanResult,
+        Stats = Self::Stats,
+    >
+    where
+        Self: 'a;
+
+    /// The type of the network interface
+    type Netif<'a>: Netif + UdpBind
+    where
+        Self: 'a;
+
+    /// Return `true` if this wireless controller can support simultaneous connections
+    fn supports_concurrent_connection(&mut self) -> bool;
+
+    /// Setup the radio to operate in wireless (Wifi or Thread) mode and return the wireless controller
+    /// and the network interface.
+    async fn start(&mut self) -> Result<(Self::Controller<'_>, Self::Netif<'_>), Error>;
+}
+
+impl<T> WirelessDTOs for &mut T
 where
-    T: Clone,
+    T: WirelessDTOs,
 {
-    type Stats = T;
+    type NetworkCredentials = T::NetworkCredentials;
+    type ScanResult = T::ScanResult;
+    type Stats = T::Stats;
+}
 
-    fn stats(&self) -> Self::Stats {
-        self.0.clone()
+impl<T> Wireless for &mut T
+where
+    T: Wireless,
+{
+    type Controller<'a> = T::Controller<'a> where Self: 'a;
+    type Netif<'a> = T::Netif<'a> where Self: 'a;
+
+    fn supports_concurrent_connection(&mut self) -> bool {
+        T::supports_concurrent_connection(*self)
+    }
+
+    async fn start(&mut self) -> Result<(Self::Controller<'_>, Self::Netif<'_>), Error> {
+        T::start(self).await
     }
 }
 
-/// A trait representing the BLE radioof the device
+/// A factory trait for constructing the BTP Gatt peripheral for the device
 pub trait Ble {
-    type Paripheral<'a>: GattPeripheral
+    type Peripheral<'a>: GattPeripheral
     where
         Self: 'a;
 
     /// Setup the radio to operate in BLE mode and return a GATT peripheral configured as per the
     /// requirements of the `rs-matter` BTP implementation. Necessary during commissioning.
-    async fn peripheral(&mut self) -> Self::Paripheral<'_>;
+    async fn start(&mut self) -> Result<Self::Peripheral<'_>, Error>;
 }
 
 impl<T> Ble for &mut T
 where
     T: Ble,
 {
-    type Paripheral<'a> = T::Paripheral<'a> where Self: 'a;
+    type Peripheral<'a> = T::Peripheral<'a> where Self: 'a;
 
-    async fn peripheral(&mut self) -> Self::Paripheral<'_> {
-        T::peripheral(*self).await
+    async fn start(&mut self) -> Result<Self::Peripheral<'_>, Error> {
+        T::start(*self).await
     }
 }

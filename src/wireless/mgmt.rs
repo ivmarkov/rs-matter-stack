@@ -11,7 +11,7 @@ use rs_matter::error::Error;
 use crate::wireless::NetworkCredentials;
 
 use super::store::{NetworkContext, NetworkStatus};
-use super::WirelessController;
+use super::Controller;
 
 /// A generic Wireless manager.
 ///
@@ -30,7 +30,7 @@ pub struct WirelessManager<W>(W);
 
 impl<W> WirelessManager<W>
 where
-    W: WirelessController,
+    W: Controller,
     W::NetworkCredentials: Clone,
 {
     /// Create a new wireless manager.
@@ -59,7 +59,7 @@ where
             });
 
             let Some(creds) = creds else {
-                context.wait_network_connect().await;
+                context.wait_network_activated().await;
                 continue;
             };
 

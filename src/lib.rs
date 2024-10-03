@@ -14,7 +14,7 @@ use core::pin::pin;
 
 use edge_nal::{UdpBind, UdpSplit};
 
-use embassy_futures::select::{select3, select4};
+use embassy_futures::select::{select, select4, Either4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use log::info;
@@ -27,7 +27,7 @@ use rs_matter::data_model::subscriptions::Subscriptions;
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::mdns::{Mdns, MdnsService};
 use rs_matter::respond::DefaultResponder;
-use rs_matter::transport::network::{NetworkReceive, NetworkSend};
+use rs_matter::transport::network::{Address, ChainedNetwork, NetworkReceive, NetworkSend};
 use rs_matter::utils::epoch::Epoch;
 use rs_matter::utils::init::{init, Init};
 use rs_matter::utils::rand::Rand;
@@ -63,6 +63,7 @@ pub mod netif;
 pub mod network;
 pub mod persist;
 pub mod udp;
+pub mod utils;
 pub mod wireless;
 
 const MAX_SUBSCRIPTIONS: usize = 3;
@@ -272,6 +273,17 @@ where
             .await
     }
 
+    fn update_netif_conf(&self, netif_conf: Option<&NetifConf>) -> bool {
+        self.netif_conf.modify(|global_ip_info| {
+            if global_ip_info.as_ref() != netif_conf {
+                *global_ip_info = netif_conf.cloned();
+                (true, true)
+            } else {
+                (false, false)
+            }
+        })
+    }
+
     /// User code hook to detect changes to the IP state of the netif passed to the
     /// `run_with_netif` method.
     ///
@@ -291,105 +303,124 @@ where
         Ok(self.matter().is_commissioned())
     }
 
-    /// This method is a specialization of `run_with_transport` over the UDP transport (both IPv4 and IPv6).
-    /// It calls `run_with_transport` and in parallel runs the mDNS service.
+    /// This method is a specialization of `run_transport_net` over the UDP transport (both IPv4 and IPv6).
+    /// It calls `run_transport_net` and in parallel runs the mDNS service.
     ///
     /// The netif instance is necessary, so that the loop can monitor the network and bring up/down
     /// the main UDP transport and the mDNS service when the netif goes up/down or changes its IP addresses.
     ///
     /// Parameters:
-    /// - `persist` - a user-provided `Persist` implementation
     /// - `netif` - a user-provided `Netif` implementation
-    /// - `handler` - a user-provided DM handler implementation
-    /// - `user` - a user-provided future that will be polled only when the netif interface is up
-    pub async fn run_with_netif<'d, H, P, I, U>(
+    /// - `until` - the method will return once this future becomes ready
+    /// - `comm` - a tuple of additional and optional `NetworkReceive` and `NetworkSend` transport implementations
+    ///   (useful when a second transport needs to run in parallel with the operational Matter transport,
+    ///   i.e. when using concurrent commissisoning)
+    async fn run_oper_net<'d, I, U, R, S>(
         &self,
-        mut persist: P,
         netif: I,
-        handler: H,
-        user: U,
+        until: U,
+        mut comm: Option<(R, S)>,
     ) -> Result<(), Error>
     where
-        H: AsyncHandler + AsyncMetadata,
-        P: Persist,
         I: Netif + UdpBind,
         U: Future<Output = Result<(), Error>>,
+        R: NetworkReceive,
+        S: NetworkSend,
     {
-        let mut user = pin!(user);
+        let mut until_task = pin!(until);
+
+        let _guard = scopeguard::guard((), |_| {
+            self.update_netif_conf(None);
+        });
 
         loop {
-            info!("Waiting for the network to come up...");
+            let netif_conf = netif.get_conf().await?;
+            self.update_netif_conf(netif_conf.as_ref());
 
-            let reset_netif_info = || {
-                self.netif_conf.modify(|global_netif_info| {
-                    if global_netif_info.is_some() {
-                        *global_netif_info = None;
-                        (true, ())
-                    } else {
-                        (false, ())
-                    }
-                });
-            };
-
-            let _guard = scopeguard::guard((), |_| reset_netif_info());
-
-            reset_netif_info();
-
-            let netif_conf = loop {
-                if let Some(netif_conf) = netif.get_conf().await? {
-                    break netif_conf;
-                }
-
-                netif.wait_conf_change().await?;
-            };
-
-            info!("Got IP network: {netif_conf}");
-
-            self.netif_conf.modify(|global_ip_info| {
-                *global_ip_info = Some(netif_conf.clone());
-
-                (true, ())
-            });
-
-            let mut socket = netif
-                .bind(SocketAddr::V6(SocketAddrV6::new(
-                    Ipv6Addr::UNSPECIFIED,
-                    MATTER_PORT,
-                    0,
-                    netif_conf.interface,
-                )))
-                .await
-                .map_err(|_| ErrorCode::StdIoError)?;
-
-            let (recv, send) = socket.split();
-
-            let mut main = pin!(self.run_with_transport(
-                udp::Udp(send),
-                udp::Udp(recv),
-                &mut persist,
-                &handler
-            ));
-            let mut mdns = pin!(self.run_builtin_mdns(&netif, &netif_conf));
-            let mut down = pin!(async {
+            let mut netif_changed_task = pin!(async {
                 loop {
-                    let next = netif.get_conf().await?;
-                    let next = next.as_ref();
-
-                    if Some(&netif_conf) != next {
-                        break;
+                    if netif_conf != netif.get_conf().await? {
+                        break Ok::<_, Error>(());
+                    } else {
+                        netif.wait_conf_change().await?;
                     }
-
-                    netif.wait_conf_change().await?;
                 }
-
-                Ok(())
             });
 
-            select4(&mut main, &mut mdns, &mut down, &mut user)
-                .coalesce()
-                .await?;
+            let result = if let Some(netif_conf) = netif_conf.as_ref() {
+                info!("Netif up: {}", netif_conf);
 
-            info!("Network change detected");
+                let mut socket = netif
+                    .bind(SocketAddr::V6(SocketAddrV6::new(
+                        Ipv6Addr::UNSPECIFIED,
+                        MATTER_PORT,
+                        0,
+                        netif_conf.interface,
+                    )))
+                    .await
+                    .map_err(|_| ErrorCode::StdIoError)?;
+
+                let (recv, send) = socket.split();
+
+                let mut mdns_task = pin!(self.run_builtin_mdns(&netif, netif_conf));
+
+                if let Some((comm_recv, comm_send)) = comm.as_mut() {
+                    info!("Running operational and extra networks");
+
+                    let mut netw_task = pin!(self.run_transport_net(
+                        ChainedNetwork::new(Address::is_udp, udp::Udp(send), comm_send),
+                        ChainedNetwork::new(Address::is_udp, udp::Udp(recv), comm_recv),
+                    ));
+
+                    select4(
+                        &mut netw_task,
+                        &mut mdns_task,
+                        &mut netif_changed_task,
+                        &mut until_task,
+                    )
+                    .await
+                } else {
+                    info!("Running operational network");
+
+                    let mut netw_task =
+                        pin!(self.run_transport_net(udp::Udp(send), udp::Udp(recv),));
+
+                    select4(
+                        &mut netw_task,
+                        &mut mdns_task,
+                        &mut netif_changed_task,
+                        &mut until_task,
+                    )
+                    .await
+                }
+            } else if let Some((comm_recv, comm_send)) = comm.as_mut() {
+                info!("Running commissioning network only");
+
+                let mut netw_task = pin!(self.run_transport_net(comm_send, comm_recv));
+
+                select4(
+                    &mut netw_task,
+                    core::future::pending(),
+                    &mut netif_changed_task,
+                    &mut until_task,
+                )
+                .await
+            } else {
+                info!("Netif down");
+
+                select4(
+                    core::future::pending(),
+                    core::future::pending(),
+                    &mut netif_changed_task,
+                    &mut until_task,
+                )
+                .await
+            };
+
+            match result {
+                Either4::Third(_) => info!("IP network change detected"),
+                Either4::First(r) | Either4::Second(r) | Either4::Fourth(r) => break r,
+            }
         }
     }
 
@@ -406,31 +437,19 @@ where
     /// user-provided transport might not be IP-based (i.e. BLE).
     ///
     /// It also has no facilities for monitoring the transport network state.
-    pub async fn run_with_transport<'d, S, R, P, H>(
-        &self,
-        send: S,
-        recv: R,
-        persist: P,
-        handler: H,
-    ) -> Result<(), Error>
+    async fn run_handlers<'d, P, H>(&self, persist: P, handler: H) -> Result<(), Error>
     where
-        S: NetworkSend,
-        R: NetworkReceive,
         H: AsyncHandler + AsyncMetadata,
         P: Persist,
     {
+        // TODO
         // Reset the Matter transport buffers and all sessions first
-        self.matter().reset_transport()?;
+        // self.matter().reset_transport()?;
 
         let mut psm = pin!(self.run_psm(persist));
         let mut respond = pin!(self.run_responder(handler));
-        let mut transport = pin!(self.run_transport(send, recv));
 
-        select3(&mut psm, &mut respond, &mut transport)
-            .coalesce()
-            .await?;
-
-        Ok(())
+        select(&mut psm, &mut respond).coalesce().await
     }
 
     async fn run_psm<P>(&self, mut persist: P) -> Result<(), Error>
@@ -546,7 +565,7 @@ where
         Ok(())
     }
 
-    async fn run_transport<S, R>(&self, send: S, recv: R) -> Result<(), Error>
+    async fn run_transport_net<S, R>(&self, send: S, recv: R) -> Result<(), Error>
     where
         S: NetworkSend,
         R: NetworkReceive,

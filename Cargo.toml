@@ -13,7 +13,7 @@ readme = "README.md"
 rust-version = "1.77"
 
 [patch.crates-io]
-#rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "tip" }
+#rs-matter = { git = "https://github.com/ivmarkov/rs-matter" }
 rs-matter = { path = "../rs-matter/rs-matter" }
 #edge-nal = { git = "https://github.com/ivmarkov/edge-net" }
 #edge-nal = { path = "../edge-net/edge-nal" }
@@ -34,6 +34,7 @@ alloc = ["embedded-svc/alloc"]
 log = { version = "0.4", default-features = false }
 heapless = "0.8"
 enumset = { version = "1", default-features = false }
+bitflags = { version =  "2.5", default-features = false }
 scopeguard = { version = "1", default-features = false }
 embassy-futures = "0.1"
 embassy-sync = "0.6"

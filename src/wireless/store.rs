@@ -184,6 +184,7 @@ where
         }
     }
 
+    /// Return an in-place initializer for the struct.
     pub fn init() -> impl Init<Self> {
         init!(Self {
             state <- Mutex::init(RefCell::init(NetworkState::init())),
@@ -213,11 +214,12 @@ where
         self.state.lock(|state| state.borrow_mut().store(buf))
     }
 
+    /// Return `true` if the state has changed.
     pub fn is_changed(&self) -> bool {
         self.state.lock(|state| state.borrow().changed)
     }
 
-    pub fn is_network_connect_requested(&self) -> bool {
+    pub fn is_network_activated(&self) -> bool {
         self.state
             .lock(|state| state.borrow().connect_requested.is_some())
     }
@@ -225,8 +227,8 @@ where
     /// Wait until signalled by the Matter stack that a network connect request is issued during commissioning.
     ///
     /// Typically, this is a signal that the BLE/BTP transport should be teared down and
-    /// the Wifi transport should be brought up.
-    pub async fn wait_network_connect(&self) {
+    /// the Wifi transport should be brought up for the Matter non-concurrent connections' case.
+    pub async fn wait_network_activated(&self) {
         loop {
             if self
                 .state
