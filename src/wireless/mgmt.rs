@@ -82,7 +82,9 @@ where
             let mut result = Ok(());
 
             for delay in [2, 5, 10, 20, 30, 60].iter().copied() {
-                result = self.connect(creds).await;
+                info!("Connecting to network with ID {}", creds.network_id());
+
+                result = self.0.connect(creds).await;
 
                 if result.is_ok() {
                     break;
@@ -144,85 +146,4 @@ where
             timer.await;
         }
     }
-
-    async fn connect(
-        &mut self,
-        creds: &<T::Data as WirelessData>::NetworkCredentials,
-    ) -> Result<(), Error> {
-        info!("Connecting to network with ID {}", creds.network_id());
-
-        // TODO
-        // let auth_methods: &[AuthMethod] = if creds.password.is_empty() {
-        //     &[AuthMethod::None]
-        // } else {
-        //     &[
-        //         AuthMethod::WPAWPA2Personal,
-        //         AuthMethod::WPA2WPA3Personal,
-        //         AuthMethod::WEP,
-        //     ]
-        // };
-
-        // let mut result = Ok(());
-
-        // for auth_method in auth_methods.iter().copied() {
-        //     let conf = wifi::Configuration::Client(wifi::ClientConfiguration {
-        //         ssid: creds.ssid.clone(),
-        //         auth_method,
-        //         password: creds.password.clone(),
-        //         ..Default::default()
-        //     });
-
-        //     result = self.connect_with(&conf).await;
-
-        //     if result.is_ok() {
-        //         break;
-        //     }
-        // }
-
-        // result
-
-        Ok(())
-    }
-
-    // TODO
-    // async fn connect_with(&mut self, conf: &wifi::Configuration) -> Result<(), Error> {
-    //     info!("Connecting with {:?}", conf);
-
-    //     let _ = self.0.stop().await;
-
-    //     self.0.set_configuration(conf).await?;
-
-    //     self.0.start().await?;
-
-    //     let connect = matches!(conf, wifi::Configuration::Client(_))
-    //         && !matches!(
-    //             conf,
-    //             wifi::Configuration::Client(wifi::ClientConfiguration {
-    //                 auth_method: wifi::AuthMethod::None,
-    //                 ..
-    //             })
-    //         );
-
-    //     if connect {
-    //         self.0.connect().await?;
-    //     }
-
-    //     info!("Successfully connected with {:?}", conf);
-
-    //     // TODO esp!(unsafe { esp_netif_create_ip6_linklocal(wifi.wifi().sta_netif().handle() as _) })?;
-
-    //     Ok(())
-    // }
 }
-
-// impl<W> Wireless<WifiCredentials> for WirelessManager<W>
-// where
-//     W: Wifi,
-// {
-//     async fn run<const N: usize, M>(&mut self, context: &NetworkContext<N, M, WifiCredentials>) -> Result<(), Error>
-//     where
-//         M: RawMutex,
-//     {
-//         WirelessManager::run(self, context).await
-//     }
-// }

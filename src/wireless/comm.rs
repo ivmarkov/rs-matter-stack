@@ -1,25 +1,28 @@
 //! Wireless network commissioning cluster.
 
+use core::ops::DerefMut;
+
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
+use embassy_sync::mutex::Mutex;
 use log::{info, warn};
 
 use rs_matter::data_model::objects::{
-    AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, CmdDataEncoder, CmdDetails, Dataver,
-    Handler, NonBlockingHandler,
+    AsyncHandler, AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, CmdDataEncoder,
+    CmdDataWriter, CmdDetails, Dataver,
 };
 use rs_matter::data_model::sdm::nw_commissioning::{
     AddThreadNetworkRequest, AddWifiNetworkRequest, Attributes, Commands, ConnectNetworkRequest,
     ConnectNetworkResponse, NetworkCommissioningStatus, NetworkConfigResponse, NwInfo,
     RemoveNetworkRequest, ReorderNetworkRequest, ResponseCommands, ScanNetworksRequest,
-    THR_CLUSTER, WIFI_CLUSTER,
+    ScanNetworksResponseTag, THR_CLUSTER, WIFI_CLUSTER,
 };
-use rs_matter::error::{Error, ErrorCode};
+use rs_matter::error::Error;
 use rs_matter::tlv::{FromTLV, Octets, TLVElement, TLVTag, TLVWrite, ToTLV};
 use rs_matter::transport::exchange::Exchange;
 
 use super::store::NetworkContext;
-use super::traits::WirelessData;
+use super::traits::{Controller, WirelessData};
 use super::NetworkCredentials;
 
 /// A cluster implementing the Matter Network Commissioning Cluster
@@ -29,34 +32,44 @@ use super::NetworkCredentials;
 pub struct WirelessNwCommCluster<'a, const N: usize, M, T>
 where
     M: RawMutex,
-    T: WirelessData,
-    T::NetworkCredentials: Clone + for<'b> FromTLV<'b> + ToTLV,
+    T: Controller,
+    <T::Data as WirelessData>::NetworkCredentials: Clone + for<'b> FromTLV<'b> + ToTLV,
 {
     data_ver: Dataver,
-    networks: &'a NetworkContext<N, M, T>,
+    networks: &'a NetworkContext<N, M, T::Data>,
+    controller: Mutex<M, T>,
 }
 
 impl<'a, const N: usize, M, T> WirelessNwCommCluster<'a, N, M, T>
 where
     M: RawMutex,
-    T: WirelessData,
-    T::NetworkCredentials: Clone + for<'b> FromTLV<'b> + ToTLV,
+    T: Controller,
+    <T::Data as WirelessData>::NetworkCredentials: Clone + for<'b> FromTLV<'b> + ToTLV,
+    <T::Data as WirelessData>::ScanResult: ToTLV,
 {
     /// Create a new instance.
-    pub const fn new(data_ver: Dataver, networks: &'a NetworkContext<N, M, T>) -> Self {
-        Self { data_ver, networks }
+    pub const fn new(
+        data_ver: Dataver,
+        networks: &'a NetworkContext<N, M, T::Data>,
+        controller: T,
+    ) -> Self {
+        Self {
+            data_ver,
+            networks,
+            controller: Mutex::new(controller),
+        }
     }
 
     /// Read an attribute.
-    pub fn read(
+    pub async fn read(
         &self,
-        _exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        _exchange: &Exchange<'_>,
+        attr: &AttrDetails<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
         if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
-                if T::NetworkCredentials::is_wifi() {
+                if <T::Data as WirelessData>::NetworkCredentials::is_wifi() {
                     WIFI_CLUSTER.read(attr.attr_id, writer)
                 } else {
                     THR_CLUSTER.read(attr.attr_id, writer)
@@ -126,17 +139,18 @@ where
     }
 
     /// Invoke a command.
-    pub fn invoke(
+    pub async fn invoke(
         &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
+        exchange: &Exchange<'_>,
+        cmd: &CmdDetails<'_>,
+        data: &TLVElement<'_>,
+        encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
         match cmd.cmd_id.try_into()? {
             Commands::ScanNetworks => {
                 info!("ScanNetworks");
-                self.scan_networks(exchange, &ScanNetworksRequest::from_tlv(data)?, encoder)?;
+                self.scan_networks(exchange, &ScanNetworksRequest::from_tlv(data)?, encoder)
+                    .await?;
             }
             Commands::AddOrUpdateWifiNetwork => {
                 info!("AddOrUpdateWifiNetwork");
@@ -156,7 +170,8 @@ where
             }
             Commands::ConnectNetwork => {
                 info!("ConnectNetwork");
-                self.connect_network(exchange, &ConnectNetworkRequest::from_tlv(data)?, encoder)?;
+                self.connect_network(exchange, &ConnectNetworkRequest::from_tlv(data)?, encoder)
+                    .await?;
             }
             Commands::ReorderNetwork => {
                 info!("ReorderNetwork");
@@ -169,48 +184,73 @@ where
         Ok(())
     }
 
-    fn scan_networks(
+    async fn scan_networks(
         &self,
         _exchange: &Exchange<'_>,
         req: &ScanNetworksRequest<'_>,
-        _encoder: CmdDataEncoder<'_, '_, '_>,
+        encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        info!("ScanNetworks req: {:?}", req);
-        warn!("Scan network not supported");
-
+        // NOTE:
         // Unfortunately Alexa calls `ScanNetworks` even if we have explicitly communicated
         // that we do not support concurrent commissioning
-        //
-        // Cheat and declare that the SSID it is asking for is found
 
-        // let mut writer = encoder.with_command(ResponseCommands::ScanNetworksResponse as _)?;
+        info!("ScanNetworks req: {:?}", req);
 
-        // writer.start_struct(&CmdDataWriter::TAG)?;
+        let mut controller = self.controller.lock().await;
 
-        // NetworkCommissioningStatus::Success.to_tlv(&TLVTag::Context(ScanNetworksResponseTag::Status as _), &mut *writer)?;
+        let mut encoder = Some(encoder);
+        let mut owriter: Option<CmdDataWriter<'_, '_, '_>> = None;
 
-        // writer.utf8(&TLVTag::Context(ScanNetworksResponseTag::DebugText as _), "")?;
+        controller
+            .scan(
+                req.ssid.map(|ssid| ssid.0.try_into()).transpose()?.as_ref(),
+                |result| {
+                    let Some(result) = result else {
+                        return Ok(());
+                    };
 
-        // writer.start_array(&TLVTag::Context(ScanNetworksResponseTag::WifiScanResults as _))?;
+                    if owriter.is_none() {
+                        let mut writer = encoder
+                            .take()
+                            .unwrap()
+                            .with_command(ResponseCommands::ScanNetworksResponse as _)?;
 
-        // WiFiInterfaceScanResult {
-        //     security: WiFiSecurity::Wpa2Personal,
-        //     ssid: Octets(b"test\0"),
-        //     bssid: Octets(&[0xF4, 0x6A, 0xDD, 0xF4, 0xF2, 0xB5]),
-        //     channel: 20,
-        //     band: None,
-        //     rssi: None,
-        // }
-        // .to_tlv(&TLVTag::Anonymous, &mut *writer)?;
+                        writer.start_struct(&CmdDataWriter::TAG)?;
 
-        // writer.end_container()?;
-        // writer.end_container()?;
+                        NetworkCommissioningStatus::Success.to_tlv(
+                            &TLVTag::Context(ScanNetworksResponseTag::Status as _),
+                            &mut *writer,
+                        )?;
 
-        // writer.complete()?;
+                        writer.utf8(
+                            &TLVTag::Context(ScanNetworksResponseTag::DebugText as _),
+                            "",
+                        )?;
 
-        // Ok(())
+                        writer.start_array(&TLVTag::Context(
+                            ScanNetworksResponseTag::WifiScanResults as _,
+                        ))?;
 
-        Err(ErrorCode::Busy)?
+                        owriter = Some(writer);
+                    }
+
+                    let writer = owriter.as_mut().unwrap();
+
+                    result.to_tlv(&TLVTag::Anonymous, writer.deref_mut())?;
+
+                    Ok(())
+                },
+            )
+            .await?; // TODO
+
+        if let Some(mut writer) = owriter {
+            writer.end_container()?;
+            writer.end_container()?;
+
+            writer.complete()?;
+        }
+
+        Ok(())
     }
 
     fn add_wifi_network(
@@ -221,7 +261,11 @@ where
     ) -> Result<(), Error> {
         // TODO: Check failsafe status
 
-        self.add_network(exchange, T::NetworkCredentials::try_from(req)?, encoder)
+        self.add_network(
+            exchange,
+            <T::Data as WirelessData>::NetworkCredentials::try_from(req)?,
+            encoder,
+        )
     }
 
     fn add_thread_network(
@@ -232,13 +276,17 @@ where
     ) -> Result<(), Error> {
         // TODO: Check failsafe status
 
-        self.add_network(exchange, T::NetworkCredentials::try_from(req)?, encoder)
+        self.add_network(
+            exchange,
+            <T::Data as WirelessData>::NetworkCredentials::try_from(req)?,
+            encoder,
+        )
     }
 
     fn add_network(
         &self,
         _exchange: &Exchange<'_>,
-        network: T::NetworkCredentials,
+        network: <T::Data as WirelessData>::NetworkCredentials,
         encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
         self.networks.state.lock(|state| {
@@ -354,7 +402,7 @@ where
         })
     }
 
-    fn connect_network(
+    async fn connect_network(
         &self,
         _exchange: &Exchange<'_>,
         req: &ConnectNetworkRequest<'_>,
@@ -366,13 +414,27 @@ where
         // (i.e. only BLE is active, and the device BLE+Wifi/Thread co-exist
         // driver is not running, or does not even exist)
 
-        let network_id: <T::NetworkCredentials as NetworkCredentials>::NetworkId =
+        let network_id: <<T::Data as WirelessData>::NetworkCredentials as NetworkCredentials>::NetworkId =
             req.network_id.0.try_into()?;
 
         info!(
             "Request to connect to network with ID {} received",
             core::str::from_utf8(req.network_id.0).unwrap(),
         );
+
+        let mut controller = self.controller.lock().await;
+
+        let creds = self.networks.state.lock(|state| {
+            let state = state.borrow();
+
+            state
+                .networks
+                .iter()
+                .find(|conf| conf.network_id() == &network_id)
+                .cloned()
+        });
+
+        controller.connect(creds.as_ref().unwrap()).await?; // TODO
 
         self.networks.state.lock(|state| {
             let mut state = state.borrow_mut();
@@ -473,38 +535,31 @@ where
     }
 }
 
-impl<'a, const N: usize, M, T> Handler for WirelessNwCommCluster<'a, N, M, T>
+impl<'a, const N: usize, M, T> AsyncHandler for WirelessNwCommCluster<'a, N, M, T>
 where
     M: RawMutex,
-    T: WirelessData,
-    T::NetworkCredentials: Clone + for<'b> FromTLV<'b> + ToTLV,
+    T: Controller,
+    <T::Data as WirelessData>::NetworkCredentials: Clone + for<'b> FromTLV<'b> + ToTLV,
+    <T::Data as WirelessData>::ScanResult: ToTLV,
 {
-    fn read(
-        &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
-    ) -> Result<(), Error> {
-        WirelessNwCommCluster::read(self, exchange, attr, encoder)
-    }
-
-    fn invoke(
+    async fn read(
         &self,
         exchange: &Exchange<'_>,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
+        attr: &AttrDetails<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        WirelessNwCommCluster::invoke(self, exchange, cmd, data, encoder)
+        WirelessNwCommCluster::read(self, exchange, attr, encoder).await
     }
-}
 
-impl<'a, const N: usize, M, T> NonBlockingHandler for WirelessNwCommCluster<'a, N, M, T>
-where
-    M: RawMutex,
-    T: WirelessData,
-    T::NetworkCredentials: Clone + for<'b> FromTLV<'b> + ToTLV,
-{
+    async fn invoke(
+        &self,
+        exchange: &Exchange<'_>,
+        cmd: &CmdDetails<'_>,
+        data: &TLVElement<'_>,
+        encoder: CmdDataEncoder<'_, '_, '_>,
+    ) -> Result<(), Error> {
+        WirelessNwCommCluster::invoke(self, exchange, cmd, data, encoder).await
+    }
 }
 
 // impl ChangeNotifier<()> for WirelessCommCluster {

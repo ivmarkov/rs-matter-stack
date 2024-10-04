@@ -213,7 +213,7 @@ pub trait Controller {
         callback: F,
     ) -> Result<(), Error>
     where
-        F: FnMut(Option<&<Self::Data as WirelessData>::ScanResult>);
+        F: FnMut(Option<&<Self::Data as WirelessData>::ScanResult>) -> Result<(), Error>;
 
     /// Connect to a network
     async fn connect(
@@ -247,7 +247,7 @@ where
         callback: F,
     ) -> Result<(), Error>
     where
-        F: FnMut(Option<&<Self::Data as WirelessData>::ScanResult>),
+        F: FnMut(Option<&<Self::Data as WirelessData>::ScanResult>) -> Result<(), Error>,
     {
         T::scan(*self, network_id, callback).await
     }
@@ -320,7 +320,7 @@ where
         _callback: F,
     ) -> Result<(), Error>
     where
-        F: FnMut(Option<&<Self::Data as WirelessData>::ScanResult>),
+        F: FnMut(Option<&<Self::Data as WirelessData>::ScanResult>) -> Result<(), Error>,
     {
         // Scan requests should not arrive in non-concurrent commissioning workflow
         Err(ErrorCode::InvalidCommand.into())
@@ -451,8 +451,14 @@ where
     T: Wireless,
 {
     type Data = T::Data;
-    type Netif<'a> = T::Netif<'a> where Self: 'a;
-    type Controller<'a> = T::Controller<'a> where Self: 'a;
+    type Netif<'a>
+        = T::Netif<'a>
+    where
+        Self: 'a;
+    type Controller<'a>
+        = T::Controller<'a>
+    where
+        Self: 'a;
 
     async fn start(&mut self) -> Result<(Self::Netif<'_>, Self::Controller<'_>), Error> {
         T::start(self).await
@@ -474,7 +480,10 @@ impl<T> Ble for &mut T
 where
     T: Ble,
 {
-    type Peripheral<'a> = T::Peripheral<'a> where Self: 'a;
+    type Peripheral<'a>
+        = T::Peripheral<'a>
+    where
+        Self: 'a;
 
     async fn start(&mut self) -> Result<Self::Peripheral<'_>, Error> {
         T::start(*self).await

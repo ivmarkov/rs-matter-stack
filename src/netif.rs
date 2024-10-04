@@ -164,7 +164,10 @@ where
 {
     type Error = U::Error;
 
-    type Socket<'a> = U::Socket<'a> where Self: 'a;
+    type Socket<'a>
+        = U::Socket<'a>
+    where
+        Self: 'a;
 
     async fn bind(&self, addr: core::net::SocketAddr) -> Result<Self::Socket<'_>, Self::Error> {
         self.bind.bind(addr).await
@@ -367,7 +370,10 @@ mod unix {
     impl edge_nal::UdpBind for UnixNetif {
         type Error = std::io::Error;
 
-        type Socket<'a> = edge_nal_std::UdpSocket where Self: 'a;
+        type Socket<'a>
+            = edge_nal_std::UdpSocket
+        where
+            Self: 'a;
 
         async fn bind(&self, addr: core::net::SocketAddr) -> Result<Self::Socket<'_>, Self::Error> {
             edge_nal_std::Stack::new().bind(addr).await

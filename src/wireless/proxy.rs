@@ -7,7 +7,8 @@ use core::pin::pin;
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use rs_matter::error::Error;
+use log::warn;
+use rs_matter::error::{Error, ErrorCode};
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::{init, Init};
 use rs_matter::utils::storage::Vec;
@@ -145,6 +146,8 @@ where
                             if let Some(result) = result {
                                 let _ = vec.push(result.clone());
                             }
+
+                            Ok(())
                         })
                         .await;
 
@@ -228,7 +231,7 @@ where
         mut callback: F,
     ) -> Result<(), Error>
     where
-        F: FnMut(Option<&<Self::Data as WirelessData>::ScanResult>),
+        F: FnMut(Option<&<Self::Data as WirelessData>::ScanResult>) -> Result<(), Error>,
     {
         let reply = self
             .command(ControllerExchange::Scan(network_id.cloned()))
@@ -237,7 +240,10 @@ where
         match reply {
             Some(ControllerExchange::ScanResult(result)) => match result {
                 Ok(result) => {
-                    result.iter().for_each(|result| callback(Some(result)));
+                    for r in &result {
+                        callback(Some(r))?
+                    }
+
                     callback(None);
 
                     Ok(())
@@ -246,8 +252,9 @@ where
             },
             Some(_) => unreachable!(),
             None => {
-                callback(None);
-                Ok(())
+                warn!("Scan network not supported");
+
+                Err(ErrorCode::Busy.into())
             }
         }
     }
@@ -266,7 +273,7 @@ where
         match reply {
             Some(ControllerExchange::ConnectResult(result)) => result,
             Some(_) => unreachable!(),
-            None => Ok(()),
+            None => Ok(()), // Pretend that we had connected successfully (for non-concurrent commissioning)
         }
     }
 

@@ -49,7 +49,7 @@ where
 
     async fn scan<F>(&mut self, network_id: Option<&WifiSsid>, mut callback: F) -> Result<(), Error>
     where
-        F: FnMut(Option<&<Self::Data as WirelessData>::ScanResult>),
+        F: FnMut(Option<&<Self::Data as WirelessData>::ScanResult>) -> Result<(), Error>,
     {
         let _ = self.0.start().await;
 
@@ -83,7 +83,7 @@ where
                     channel: r.channel as _,
                     band: None,
                     rssi: Some(r.signal_strength),
-                }));
+                }))?;
             }
         }
 
@@ -102,6 +102,11 @@ where
             AuthMethod::WEP,
             AuthMethod::None,
         ] {
+            if (auth_method == AuthMethod::None) != creds.password.is_empty() {
+                // Try open wifi networks only if the provided password is empty
+                continue;
+            }
+
             let _ = self.0.stop().await;
 
             self.0

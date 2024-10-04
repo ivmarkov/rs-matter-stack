@@ -8,6 +8,7 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use log::info;
 
+use proxy::ControllerProxy;
 use rs_matter::data_model::objects::{
     AsyncHandler, AsyncMetadata, Dataver, Endpoint, HandlerCompat,
 };
@@ -374,13 +375,14 @@ where
 
     /// Return a handler for the root (Endpoint 0) of the Matter Node
     /// configured for BLE+Wifi network.
-    pub fn root_handler(&self) -> WifiRootEndpointHandler<'_, M> {
+    pub fn root_handler(&self) -> WifiRootEndpointHandler<'_, M, &ControllerProxy<M, WifiData>> {
         handler(
             0,
-            HandlerCompat(comm::WirelessNwCommCluster::new(
+            comm::WirelessNwCommCluster::new(
                 Dataver::new_rand(self.matter().rand()),
                 &self.network.network_context,
-            )),
+                &self.network.network_context.controller_proxy,
+            ),
             wifi_nw_diagnostics::ID,
             HandlerCompat(WifiNwDiagCluster::new(
                 Dataver::new_rand(self.matter().rand()),
@@ -413,13 +415,16 @@ where
 
     /// Return a handler for the root (Endpoint 0) of the Matter Node
     /// configured for BLE+Wifi network.
-    pub fn root_handler<P>(&self) -> ThreadRootEndpointHandler<'_, M> {
+    pub fn root_handler<P>(
+        &self,
+    ) -> ThreadRootEndpointHandler<'_, M, &ControllerProxy<M, ThreadData>> {
         handler(
             0,
-            HandlerCompat(comm::WirelessNwCommCluster::new(
+            comm::WirelessNwCommCluster::new(
                 Dataver::new_rand(self.matter().rand()),
                 &self.network.network_context,
-            )),
+                &self.network.network_context.controller_proxy,
+            ),
             thread_nw_diagnostics::ID,
             HandlerCompat(ThreadNwDiagCluster::new(
                 Dataver::new_rand(self.matter().rand()),
@@ -433,15 +438,15 @@ where
 }
 
 /// The root endpoint handler for a Wifi network.
-pub type WifiRootEndpointHandler<'a, M> = RootEndpointHandler<
+pub type WifiRootEndpointHandler<'a, M, T> = RootEndpointHandler<
     'a,
-    HandlerCompat<comm::WirelessNwCommCluster<'a, MAX_WIRELESS_NETWORKS, M, WifiData>>,
+    comm::WirelessNwCommCluster<'a, MAX_WIRELESS_NETWORKS, M, T>,
     HandlerCompat<WifiNwDiagCluster>,
 >;
 
 /// The root endpoint handler for a Thread network.
-pub type ThreadRootEndpointHandler<'a, M> = RootEndpointHandler<
+pub type ThreadRootEndpointHandler<'a, M, T> = RootEndpointHandler<
     'a,
-    HandlerCompat<comm::WirelessNwCommCluster<'a, MAX_WIRELESS_NETWORKS, M, ThreadData>>,
+    comm::WirelessNwCommCluster<'a, MAX_WIRELESS_NETWORKS, M, T>,
     HandlerCompat<ThreadNwDiagCluster<'a>>,
 >;
