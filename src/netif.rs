@@ -46,6 +46,30 @@ where
     }
 }
 
+/// A trait for running a network interface
+pub trait NetifRun {
+    /// Run the network interface
+    async fn run(&self) -> Result<(), Error>;
+}
+
+impl<T> NetifRun for &T
+where
+    T: NetifRun,
+{
+    async fn run(&self) -> Result<(), Error> {
+        T::run(self).await
+    }
+}
+
+impl<T> NetifRun for &mut T
+where
+    T: NetifRun,
+{
+    async fn run(&self) -> Result<(), Error> {
+        T::run(self).await
+    }
+}
+
 /// The current IP configuration of a network interface (if the netif is configured and up)
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NetifConf {

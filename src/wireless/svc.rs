@@ -1,29 +1,47 @@
-//! Implementation of `WirelessController` and `WirelessStats` over types implementing `embedded_svc::wifi::asynch::Wifi`
+//! Implementation of `Controller` over types implementing `embedded_svc::wifi::asynch::Wifi`
 
 use embedded_svc::wifi::{asynch::Wifi, AuthMethod, ClientConfiguration, Configuration};
 
-use rs_matter::{
-    data_model::sdm::nw_commissioning::WiFiSecurity, error::Error, tlv::OctetsOwned,
-    utils::storage::Vec,
-};
+use rs_matter::data_model::sdm::nw_commissioning::WiFiSecurity;
+use rs_matter::data_model::sdm::wifi_nw_diagnostics::{self, WiFiVersion, WifiNwDiagData};
+use rs_matter::error::{Error, ErrorCode};
+use rs_matter::tlv::OctetsOwned;
+use rs_matter::utils::storage::Vec;
 
 use super::traits::{
     Controller, NetworkCredentials, WifiData, WifiScanResult, WifiSsid, WirelessData,
 };
 
 /// A wireless controller for the `embedded_svc::wifi::asynch::Wifi` type.
-pub struct SvcWifi<W> {
-    wifi: W,
-}
+pub struct SvcWifiController<W>(W);
 
-impl<W> SvcWifi<W> {
+impl<W> SvcWifiController<W> {
     /// Create a new `SvcWifi` instance.
-    pub fn new(wifi: W) -> Self {
-        Self { wifi }
+    pub const fn new(wifi: W) -> Self {
+        Self(wifi)
+    }
+
+    /// Get a reference to the inner `embedded_svc::wifi::asynch::Wifi` instance.
+    pub fn wifi(&self) -> &W {
+        &self.0
+    }
+
+    /// Get a mutable reference to the inner `embedded_svc::wifi::asynch::Wifi` instance.
+    pub fn wifi_mut(&mut self) -> &mut W {
+        &mut self.0
     }
 }
 
-impl<T> Controller for SvcWifi<T>
+impl<W> SvcWifiController<W>
+where
+    W: Wifi,
+{
+    fn to_err(_err: W::Error) -> Error {
+        Error::new(ErrorCode::NoNetworkInterface) // TODO
+    }
+}
+
+impl<T> Controller for SvcWifiController<T>
 where
     T: Wifi,
 {
@@ -33,9 +51,9 @@ where
     where
         F: FnMut(Option<&<Self::Data as WirelessData>::ScanResult>),
     {
-        self.wifi.start().await.unwrap();
+        let _ = self.0.start().await;
 
-        let (result, _) = self.wifi.scan_n::<5>().await.unwrap();
+        let (result, _) = self.0.scan_n::<5>().await.map_err(Self::to_err)?;
 
         for r in &result {
             if network_id.map(|id| r.ssid == id.0).unwrap_or(true) {
@@ -84,9 +102,9 @@ where
             AuthMethod::WEP,
             AuthMethod::None,
         ] {
-            let _ = self.wifi.stop().await;
+            let _ = self.0.stop().await;
 
-            self.wifi
+            self.0
                 .set_configuration(&Configuration::Client(ClientConfiguration {
                     ssid: creds.ssid.0.clone(),
                     auth_method,
@@ -94,16 +112,16 @@ where
                     ..Default::default()
                 }))
                 .await
-                .unwrap();
+                .map_err(Self::to_err)?;
 
-            self.wifi.start().await.unwrap();
+            self.0.start().await.map_err(Self::to_err)?;
 
-            self.wifi.connect().await.unwrap();
-
-            // TODO: Wait for connection to be established
+            if self.0.connect().await.is_ok() {
+                return Ok(());
+            }
         }
 
-        Ok(())
+        Err(ErrorCode::NoNetworkInterface.into()) // TODO
     }
 
     async fn connected_network(
@@ -112,10 +130,28 @@ where
         Option<<<Self::Data as WirelessData>::NetworkCredentials as NetworkCredentials>::NetworkId>,
         Error,
     > {
-        todo!()
+        let conf = self.0.get_configuration().await.map_err(Self::to_err)?;
+
+        Ok(match conf {
+            Configuration::Client(ClientConfiguration { ssid, .. }) => Some(WifiSsid(ssid)),
+            _ => None,
+        })
     }
 
     async fn stats(&mut self) -> Result<<Self::Data as WirelessData>::Stats, Error> {
-        todo!()
+        // TODO: We need stats() in the Wifi trait
+
+        let conf = self.0.get_configuration().await.map_err(Self::to_err)?;
+
+        Ok(match conf {
+            Configuration::Client(_) => Some(WifiNwDiagData {
+                bssid: [0; 6],
+                security_type: wifi_nw_diagnostics::WiFiSecurity::Unspecified,
+                wifi_version: WiFiVersion::B,
+                channel_number: 20,
+                rssi: 0,
+            }),
+            _ => None,
+        })
     }
 }

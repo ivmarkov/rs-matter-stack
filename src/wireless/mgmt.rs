@@ -26,7 +26,7 @@ use super::Controller;
 /// with a backoff strategy and in a round-robin fashion with the other
 /// networks in case of a failure.
 ///
-/// The comminication with the wireless device is done through the `WirelessController` trait.
+/// The comminication with the wireless device is done through the `Controller` trait.
 pub struct WirelessManager<T>(T);
 
 impl<T> WirelessManager<T>

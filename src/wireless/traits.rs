@@ -7,12 +7,13 @@ use edge_nal::UdpBind;
 use rs_matter::data_model::sdm::nw_commissioning::{
     AddThreadNetworkRequest, AddWifiNetworkRequest, WiFiSecurity, WifiBand,
 };
+use rs_matter::data_model::sdm::wifi_nw_diagnostics::WifiNwDiagData;
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::tlv::{FromTLV, OctetsOwned, ToTLV};
 use rs_matter::transport::network::btp::GattPeripheral;
 use rs_matter::utils::storage::Vec;
 
-use crate::netif::Netif;
+use crate::netif::{Netif, NetifRun};
 
 /// A trait representing the credentials of a wireless network (Wifi or Thread).
 pub trait NetworkCredentials:
@@ -291,8 +292,8 @@ where
 
 impl DisconnectedController<WifiData> {
     /// Create a new disconnected controller for Wifi networks
-    pub const fn new_wifi(stats: ()) -> Self {
-        Self::new(stats)
+    pub const fn new_wifi() -> Self {
+        Self::new(None)
     }
 }
 
@@ -366,7 +367,7 @@ pub struct WifiData;
 impl WirelessData for WifiData {
     type NetworkCredentials = WifiCredentials;
     type ScanResult = WifiScanResult;
-    type Stats = ();
+    type Stats = Option<WifiNwDiagData>;
 }
 
 /// A struct implementing the `WirelessData` trait for Thread networks.
@@ -430,19 +431,19 @@ impl ConcurrencyMode for NC {
 pub trait Wireless {
     type Data: WirelessData;
 
+    /// The type of the network interface
+    type Netif<'a>: Netif + NetifRun + UdpBind
+    where
+        Self: 'a;
+
     /// The type of the controller
     type Controller<'a>: Controller<Data = Self::Data>
     where
         Self: 'a;
 
-    /// The type of the network interface
-    type Netif<'a>: Netif + UdpBind
-    where
-        Self: 'a;
-
     /// Setup the radio to operate in wireless (Wifi or Thread) mode and return the wireless controller
     /// and the network interface.
-    async fn start(&mut self) -> Result<(Self::Controller<'_>, Self::Netif<'_>), Error>;
+    async fn start(&mut self) -> Result<(Self::Netif<'_>, Self::Controller<'_>), Error>;
 }
 
 impl<T> Wireless for &mut T
@@ -450,10 +451,10 @@ where
     T: Wireless,
 {
     type Data = T::Data;
-    type Controller<'a> = T::Controller<'a> where Self: 'a;
     type Netif<'a> = T::Netif<'a> where Self: 'a;
+    type Controller<'a> = T::Controller<'a> where Self: 'a;
 
-    async fn start(&mut self) -> Result<(Self::Controller<'_>, Self::Netif<'_>), Error> {
+    async fn start(&mut self) -> Result<(Self::Netif<'_>, Self::Controller<'_>), Error> {
         T::start(self).await
     }
 }

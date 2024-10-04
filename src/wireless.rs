@@ -3,7 +3,7 @@ use core::pin::pin;
 
 use edge_nal::UdpBind;
 
-use embassy_futures::select::{select, select3};
+use embassy_futures::select::{select, select3, select4};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use log::info;
@@ -29,7 +29,7 @@ use traits::{
     ConcurrencyMode, Thread, ThreadData, Wifi, WifiData, Wireless, WirelessConfig, WirelessData,
 };
 
-use crate::netif::Netif;
+use crate::netif::{Netif, NetifRun};
 use crate::network::{Embedding, Network};
 use crate::persist::Persist;
 use crate::utils::futures::IntoFaillble;
@@ -197,7 +197,7 @@ where
         <W::Data as WirelessData>::Stats: Default,
     {
         if T::CONCURRENT {
-            let (mut controller, mut netif) = wireless.start().await?;
+            let (netif, mut controller) = wireless.start().await?;
 
             let mut mgr = WirelessManager::new(&self.network.network_context.controller_proxy);
 
@@ -215,7 +215,8 @@ where
 
                     info!("BLE driver started");
 
-                    let mut net_task = pin!(self.run_comm_net(&btp, &mut netif));
+                    let mut netif_task = pin!(netif.run());
+                    let mut net_task = pin!(self.run_comm_net(&btp, &netif));
                     let mut mgr_task = pin!(mgr.run(&self.network.network_context));
                     let mut proxy_task = pin!(self
                         .network
@@ -223,14 +224,20 @@ where
                         .controller_proxy
                         .process_with(&mut controller));
 
-                    select3(&mut net_task, &mut mgr_task, &mut proxy_task)
-                        .coalesce()
-                        .await?;
+                    select4(
+                        &mut netif_task,
+                        &mut net_task,
+                        &mut mgr_task,
+                        &mut proxy_task,
+                    )
+                    .coalesce()
+                    .await?;
                 } else {
                     self.matter().disable_commissioning()?;
 
+                    let mut netif_task = pin!(netif.run());
                     let mut net_task = pin!(self.run_oper_net(
-                        &mut netif,
+                        &netif,
                         core::future::pending(),
                         Option::<(NoNetwork, NoNetwork)>::None
                     ));
@@ -241,9 +248,14 @@ where
                         .controller_proxy
                         .process_with(&mut controller));
 
-                    select3(&mut net_task, &mut mgr_task, &mut proxy_task)
-                        .coalesce()
-                        .await?;
+                    select4(
+                        &mut netif_task,
+                        &mut net_task,
+                        &mut mgr_task,
+                        &mut proxy_task,
+                    )
+                    .coalesce()
+                    .await?;
                 }
             }
         } else {
@@ -262,7 +274,7 @@ where
                     self.run_nc_comm_net(&btp).await?;
                 }
 
-                let (mut controller, mut netif) = wireless.start().await?;
+                let (netif, mut controller) = wireless.start().await?;
 
                 let mut mgr = WirelessManager::new(&self.network.network_context.controller_proxy);
 
@@ -270,8 +282,9 @@ where
 
                 self.matter().disable_commissioning()?;
 
+                let mut netif_task = pin!(netif.run());
                 let mut net_task = pin!(self.run_oper_net(
-                    &mut netif,
+                    &netif,
                     core::future::pending(),
                     Option::<(NoNetwork, NoNetwork)>::None
                 ));
@@ -282,9 +295,14 @@ where
                     .controller_proxy
                     .process_with(&mut controller));
 
-                select3(&mut net_task, &mut mgr_task, &mut proxy_task)
-                    .coalesce()
-                    .await?;
+                select4(
+                    &mut netif_task,
+                    &mut net_task,
+                    &mut mgr_task,
+                    &mut proxy_task,
+                )
+                .coalesce()
+                .await?;
             }
         }
     }
