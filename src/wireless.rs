@@ -499,11 +499,13 @@ where
 {
     type Data = T;
 
-    type Netif<'a> = &'a mut N
+    type Netif<'a>
+        = &'a mut N
     where
         Self: 'a;
 
-    type Controller<'a> = DisconnectedController<T>
+    type Controller<'a>
+        = DisconnectedController<T>
     where
         Self: 'a;
 
@@ -530,7 +532,8 @@ mod bluez {
     }
 
     impl<'a> Ble for BuiltinBle<'a> {
-        type Peripheral<'t> = BuiltinGattPeripheral
+        type Peripheral<'t>
+            = BuiltinGattPeripheral
         where
             Self: 't;
 
