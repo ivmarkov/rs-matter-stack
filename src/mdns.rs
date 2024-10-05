@@ -45,7 +45,10 @@ where
     B: BufferAccess<T>,
     T: ?Sized,
 {
-    type Buffer<'a> = B::Buffer<'a> where Self: 'a;
+    type Buffer<'a>
+        = B::Buffer<'a>
+    where
+        Self: 'a;
 
     async fn get(&self) -> Option<Self::Buffer<'_>> {
         self.0.get().await

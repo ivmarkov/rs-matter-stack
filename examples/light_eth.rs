@@ -28,7 +28,7 @@ use rs_matter::utils::select::Coalesce;
 use rs_matter::BasicCommData;
 
 use rs_matter_stack::netif::UnixNetif;
-use rs_matter_stack::persist::{DirKvBlobStore, KvBlobBuf, KvPersist};
+use rs_matter_stack::persist::{new_kv, DirKvBlobStore, KvBlobBuf};
 use rs_matter_stack::EthMatterStack;
 
 use static_cell::StaticCell;
@@ -96,10 +96,10 @@ fn main() -> Result<(), Error> {
     // Using `pin!` is completely optional, but saves some memory due to `rustc`
     // not being very intelligent w.r.t. stack usage in async functions
     let mut matter = pin!(stack.run(
-        // Will persist in `<tmp-dir>/rs-matter`
-        KvPersist::new_eth(DirKvBlobStore::new_default(), stack),
         // Will try to find a default network interface
         UnixNetif::default(),
+        // Will persist in `<tmp-dir>/rs-matter`
+        new_kv(DirKvBlobStore::new_default(), stack),
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
         // No user future to run
@@ -148,7 +148,7 @@ const NODE: Node = Node {
         EthMatterStack::<KvBlobBuf<()>>::root_metadata(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
-            device_type: DEV_TYPE_ON_OFF_LIGHT,
+            device_types: &[DEV_TYPE_ON_OFF_LIGHT],
             clusters: &[descriptor::CLUSTER, cluster_on_off::CLUSTER],
         },
     ],

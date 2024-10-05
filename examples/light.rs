@@ -1,6 +1,8 @@
-//! An example utilizing the `WifiBleMatterStack` struct.
-//! As the name suggests, this Matter stack assembly uses Wifi as the main transport,
-//! and BLE for commissioning.
+//! An example utilizing the `WifiNCMatterStack` struct.
+//!
+//! As the name suggests, this Matter stack assembly uses Wifi as the main transport
+//! (and thus also BLE for commissioning).
+//!
 //! If you want to use Ethernet, utilize `EthMatterStack` instead.
 //!
 //! The example implements a fictitious Light device (an On-Off Matter cluster).
@@ -23,9 +25,10 @@ use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::sync::blocking::raw::StdRawMutex;
 use rs_matter::BasicCommData;
 
-use rs_matter_stack::modem::DummyLinuxModem;
-use rs_matter_stack::persist::{DirKvBlobStore, KvBlobBuf, KvPersist};
-use rs_matter_stack::WifiBleMatterStack;
+use rs_matter_stack::netif::UnixNetif;
+use rs_matter_stack::persist::{new_kv, DirKvBlobStore, KvBlobBuf};
+use rs_matter_stack::wireless::{BuiltinBle, DummyWireless};
+use rs_matter_stack::WifiNCMatterStack;
 
 use static_cell::StaticCell;
 
@@ -43,7 +46,7 @@ fn main() -> Result<(), Error> {
     // as we'll run it in this thread
     let stack = MATTER_STACK
         .uninit()
-        .init_with(WifiBleMatterStack::init_default(
+        .init_with(WifiNCMatterStack::init_default(
             &BasicInfoConfig {
                 vid: 0xFFF1,
                 pid: 0x8001,
@@ -90,10 +93,12 @@ fn main() -> Result<(), Error> {
     // Using `pin!` is completely optional, but saves some memory due to `rustc`
     // not being very intelligent w.r.t. stack usage in async functions
     let mut matter = pin!(stack.run(
-        // Will persist in `<tmp-dir>/rs-matter`
-        KvPersist::new_wifi_ble(DirKvBlobStore::new_default(), stack),
+        // A dummy wireless modem which does nothing
+        DummyWireless::new(UnixNetif::new_default()),
         // A Linux-specific modem using BlueZ
-        DummyLinuxModem::default(),
+        BuiltinBle::new(None),
+        // Will persist in `<tmp-dir>/rs-matter`
+        new_kv(DirKvBlobStore::new_default(), stack),
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
         // No user future to run
@@ -130,7 +135,7 @@ fn main() -> Result<(), Error> {
 /// The Matter stack is allocated statically to avoid
 /// program stack blowups.
 /// It is also a mandatory requirement when the `WifiBle` stack variation is used.
-static MATTER_STACK: StaticCell<WifiBleMatterStack<StdRawMutex, KvBlobBuf<()>>> = StaticCell::new();
+static MATTER_STACK: StaticCell<WifiNCMatterStack<StdRawMutex, KvBlobBuf<()>>> = StaticCell::new();
 
 const DEV_ATT: dev_att::HardCodedDevAtt = dev_att::HardCodedDevAtt::new();
 
@@ -142,10 +147,10 @@ const LIGHT_ENDPOINT_ID: u16 = 1;
 const NODE: Node = Node {
     id: 0,
     endpoints: &[
-        WifiBleMatterStack::<StdRawMutex, KvBlobBuf<()>>::root_metadata(),
+        WifiNCMatterStack::<StdRawMutex, KvBlobBuf<()>>::root_metadata(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
-            device_type: DEV_TYPE_ON_OFF_LIGHT,
+            device_types: &[DEV_TYPE_ON_OFF_LIGHT],
             clusters: &[descriptor::CLUSTER, cluster_on_off::CLUSTER],
         },
     ],

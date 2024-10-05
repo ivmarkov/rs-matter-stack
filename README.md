@@ -30,12 +30,18 @@ You need to provide platform-specific implementations of the following traits fo
 - `Netif` - network interface abstraction (i.e. monitoring when the network interface is up or down, and what is its IP configuration).
   - For Unix-like OSes, `rs-matter-stack` provides `UnixNetif`, which uses a simple polling every 2 seconds to detect changes to the network interface.
   - Note that For IP (TCP & UDP) IO, the stack uses the [`edge-nal`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal) crate, and is thus compatible with [`STD`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal-std) and [`Embassy`](https://github.com/ivmarkov/edge-net/tree/master/edge-nal-embassy) out of the box. You only need to worry about networking IO if you use other platforms than these two.
-- `Modem` (for BLE & Wifi only) - abstraction of the device radio that can operate either in Wifi, or in BLE mode. 
-  - `DummyLinuxModem` can be used on Linux to test with BLE. This modem uses Linux BlueZ and the simple `UnixNetif` netif implementation from above, but fakes the Wifi interface with a dummy no-nop one. For production embedded Linux use-cases, you'll have to provide a `Wifi` implementation, possibly based on WPA Supplicant, or NetworkManager.
+- `Ble` - BLE abstraction of the device radio. Not necessary for Ethernet connectivity
+  - For Linux, `rs-matter-stack` provides `BuiltinBle`, which uses the Linux BlueZ BT stack.
+- `Wireless` - Wireless (Wifi or Thread) abstraction of the device radio. Not necessary for Ethernet connectivity.
+  - `DummyWireless` is a no-op wireless implementation that is useful for testing. I.e. on Linux, one can use `DummyWireless` together with `BuiltinBle` and `UnixNetif` to test the stack in wireless mode. For production embedded Linux use-cases, you'll have to provide a true `Wireless` implementation, possibly based on WPA Supplicant, or NetworkManager (not available out of the box in `rs-matter-stack` yet).
 
 ## ESP-IDF
 
-The [`esp-idf-matter`](https://github.com/ivmarkov/esp-idf-matter) crate provides implementations for `Persist`, `Netif` and `Modem` for the ESP-IDF SDK.
+The [`esp-idf-matter`](https://github.com/ivmarkov/esp-idf-matter) crate provides implementations for `Persist`, `Netif`, `Ble` and `Wireless` for the ESP-IDF SDK.
+
+## Embassy
+
+TBD - upcoming!
 
 ## Example
 
@@ -58,6 +64,7 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
+use env_logger::Target;
 use log::info;
 
 use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
@@ -66,13 +73,12 @@ use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::data_model::objects::{Dataver, Endpoint, HandlerCompat, Node};
 use rs_matter::data_model::system_model::descriptor;
 use rs_matter::error::Error;
-use rs_matter::secure_channel::spake2p::VerifierData;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::CommissioningData;
+use rs_matter::BasicCommData;
 
 use rs_matter_stack::netif::UnixNetif;
-use rs_matter_stack::persist::{DirKvBlobStore, KvBlobBuf, KvPersist};
+use rs_matter_stack::persist::{new_kv, DirKvBlobStore, KvBlobBuf};
 use rs_matter_stack::EthMatterStack;
 
 use static_cell::StaticCell;
@@ -81,9 +87,11 @@ use static_cell::StaticCell;
 mod dev_att;
 
 fn main() -> Result<(), Error> {
-    env_logger::init_from_env(
+    env_logger::Builder::from_env(
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
-    );
+    )
+    .target(Target::Stdout)
+    .init();
 
     info!("Starting...");
 
@@ -94,7 +102,7 @@ fn main() -> Result<(), Error> {
         .init_with(EthMatterStack::init_default(
             &BasicInfoConfig {
                 vid: 0xFFF1,
-                pid: 0x8000,
+                pid: 0x8001,
                 hw_ver: 2,
                 sw_ver: 1,
                 sw_ver_str: "1",
@@ -102,6 +110,10 @@ fn main() -> Result<(), Error> {
                 device_name: "MyLight",
                 product_name: "ACME Light",
                 vendor_name: "ACME",
+            },
+            BasicCommData {
+                password: 20202021,
+                discriminator: 3840,
             },
             &DEV_ATT,
         ));
@@ -134,15 +146,10 @@ fn main() -> Result<(), Error> {
     // Using `pin!` is completely optional, but saves some memory due to `rustc`
     // not being very intelligent w.r.t. stack usage in async functions
     let mut matter = pin!(stack.run(
-        // Will persist in `<tmp-dir>/rs-matter`
-        KvPersist::new_eth(DirKvBlobStore::new_default(), stack),
         // Will try to find a default network interface
         UnixNetif::default(),
-        // Hard-coded for demo purposes
-        CommissioningData {
-            verifier: VerifierData::new_with_pw(123456, stack.matter().rand()),
-            discriminator: 250,
-        },
+        // Will persist in `<tmp-dir>/rs-matter`
+        new_kv(DirKvBlobStore::new_default(), stack),
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
         // No user future to run
@@ -191,7 +198,7 @@ const NODE: Node = Node {
         EthMatterStack::<KvBlobBuf<()>>::root_metadata(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
-            device_type: DEV_TYPE_ON_OFF_LIGHT,
+            device_types: &[DEV_TYPE_ON_OFF_LIGHT],
             clusters: &[descriptor::CLUSTER, cluster_on_off::CLUSTER],
         },
     ],
