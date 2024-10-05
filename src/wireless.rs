@@ -25,7 +25,7 @@ use rs_matter::utils::init::{init, Init};
 use rs_matter::utils::select::Coalesce;
 use traits::{
     ConcurrencyMode, DisconnectedController, Thread, ThreadData, Wifi, WifiData, Wireless,
-    WirelessConfig, WirelessData,
+    WirelessConfig, WirelessData, NC,
 };
 
 use crate::netif::{Netif, NetifRun};
@@ -55,8 +55,12 @@ const MAX_WIRELESS_NETWORKS: usize = 2;
 /// An implementation of the `Network` trait for a Matter stack running over
 /// BLE during commissioning, and then over either WiFi or Thread when operating.
 ///
-/// The supported commissioning is of the non-concurrent type (as per the Matter Core spec),
-/// where the device - at any point in time - either runs Bluetooth or Wifi/Thread, but not both.
+/// The supported commissioning is either concurrent or non-concurrent (as per the Matter Core spec),
+/// where one over the other is decided compile-time with the concrete `WirelessConfig` type.
+///
+/// Non-concurrent commissioning means that the device - at any point in time - either runs Bluetooth
+/// or Wifi/Thread, but not both.
+///
 /// This is done to save memory and to avoid the usage of BLE+Wifi/Thread co-exist drivers on
 /// devices which share a single wireless radio for both BLE and Wifi/Thread.
 pub struct WirelessBle<M, T, E = ()>
@@ -139,8 +143,35 @@ where
     }
 }
 
+/// A type alias for a Matter stack running over Wifi (and BLE, during commissioning).
 pub type WifiMatterStack<'a, M, E> = MatterStack<'a, WirelessBle<M, Wifi, E>>;
+
+/// A type alias for a Matter stack running over Thread (and BLE, during commissioning).
 pub type ThreadMatterStack<'a, M, E> = MatterStack<'a, WirelessBle<M, Thread, E>>;
+
+/// A type alias for a Matter stack running over Wifi (and BLE, during commissioning).
+///
+/// Unlike `WifiMatterStack`, this type alias runs the commissioning in a non-concurrent mode,
+/// where the device runs either BLE or Wifi, but not both at the same time.
+///
+/// This is useful for devices which share a single wireless radio for both BLE and Wifi
+/// and do not have BLE+Wifi co-exist drivers, or just to save memory by only having one of
+/// the stacks active at any point in time.
+///
+/// Note that Alexa does not (yet) work with non-concurrent commissioning.
+pub type WifiNCMatterStack<'a, M, E> = MatterStack<'a, WirelessBle<M, Wifi<NC>, E>>;
+
+/// A type alias for a Matter stack running over Thread (and BLE, during commissioning).
+///
+/// Unlike `ThreadMatterStack`, this type alias runs the commissioning in a non-concurrent mode,
+/// where the device runs either BLE or Thread, but not both at the same time.
+///
+/// This is useful for devices which share a single wireless radio for both BLE and Thread
+/// and do not have BLE+Thread co-exist drivers, or just to save memory by only having one of
+/// the stacks active at any point in time.
+///
+/// Note that Alexa does not (yet) work with non-concurrent commissioning.
+pub type ThreadNCMatterStack<'a, M, E> = MatterStack<'a, WirelessBle<M, Thread<NC>, E>>;
 
 impl<'a, M, T, E> MatterStack<'a, WirelessBle<M, T, E>>
 where

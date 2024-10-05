@@ -1,6 +1,8 @@
-//! An example utilizing the `WifiBleMatterStack` struct.
-//! As the name suggests, this Matter stack assembly uses Wifi as the main transport,
-//! and BLE for commissioning.
+//! An example utilizing the `WifiMatterStack` struct.
+//!
+//! As the name suggests, this Matter stack assembly uses Wifi as the main transport
+//! (and thus also BLE for commissioning).
+//!
 //! If you want to use Ethernet, utilize `EthMatterStack` instead.
 //!
 //! The example implements a fictitious Light device (an On-Off Matter cluster).
