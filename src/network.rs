@@ -1,6 +1,7 @@
 use rs_matter::utils::init::{init_from_closure, Init};
 
 use crate::persist::NetworkPersist;
+use crate::private::Sealed;
 
 /// User data that can be embedded in the stack network
 pub trait Embedding {
@@ -19,7 +20,9 @@ impl Embedding for () {
 
 /// A trait modeling a specific network type.
 /// `MatterStack` is parameterized by a network type implementing this trait.
-pub trait Network {
+///
+/// The trait is sealed and has only two implementations: `Eth` and `WirelessBle`.
+pub trait Network: Sealed {
     const INIT: Self;
 
     /// The network peristence context to be used by the `Persist` trait.

@@ -31,6 +31,7 @@ use traits::{
 use crate::netif::{Netif, NetifRun};
 use crate::network::{Embedding, Network};
 use crate::persist::Persist;
+use crate::private::Sealed;
 use crate::utils::futures::IntoFaillble;
 use crate::wireless::mgmt::WirelessManager;
 use crate::wireless::store::NetworkContext;
@@ -115,6 +116,15 @@ where
     pub fn network_context(&self) -> &NetworkContext<MAX_WIRELESS_NETWORKS, M, T::Data> {
         &self.network_context
     }
+}
+
+impl<M, T, E> Sealed for WirelessBle<M, T, E>
+where
+    M: RawMutex,
+    T: WirelessConfig,
+    <T::Data as WirelessData>::NetworkCredentials: Clone + for<'a> FromTLV<'a> + ToTLV,
+    E: Embedding,
+{
 }
 
 impl<M, T, E> Network for WirelessBle<M, T, E>

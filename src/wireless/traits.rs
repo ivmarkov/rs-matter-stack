@@ -18,7 +18,7 @@ use crate::private::Sealed;
 
 /// A trait representing the credentials of a wireless network (Wifi or Thread).
 ///
-/// The trait is sealed and has only two implemewntations: `WifiCredentials` and `ThreadCredentials`.
+/// The trait is sealed and has only two implementations: `WifiCredentials` and `ThreadCredentials`.
 pub trait NetworkCredentials:
     Sealed
     + for<'a> TryFrom<&'a AddWifiNetworkRequest<'a>, Error = Error>

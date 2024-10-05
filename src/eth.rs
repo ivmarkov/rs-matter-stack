@@ -23,6 +23,7 @@ use rs_matter::utils::select::Coalesce;
 use crate::netif::Netif;
 use crate::network::{Embedding, Network};
 use crate::persist::Persist;
+use crate::private::Sealed;
 use crate::MatterStack;
 
 /// An implementation of the `Network` trait for Ethernet.
@@ -38,6 +39,8 @@ use crate::MatterStack;
 pub struct Eth<E = ()> {
     embedding: E,
 }
+
+impl<E> Sealed for Eth<E> {}
 
 impl<E> Network for Eth<E>
 where

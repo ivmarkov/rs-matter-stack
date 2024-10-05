@@ -46,7 +46,13 @@ where
     }
 }
 
-/// A trait for running a network interface
+/// A trait for running a network interface and possible the L2 layer below it
+///
+/// Used by the Matter stack only when it "owns" the operational network, i.e.
+/// when the operational network is wireless and is instantiated by the stack itself.
+///
+/// Network instantiation by the Matter stack is mandatory for non-concurrent
+/// commissioning and optional for concurrent commissioning.
 pub trait NetifRun {
     /// Run the network interface
     async fn run(&self) -> Result<(), Error>;

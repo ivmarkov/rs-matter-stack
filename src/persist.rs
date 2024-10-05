@@ -7,13 +7,18 @@ use rs_matter::utils::storage::pooled::{BufferAccess, PooledBuffers};
 use rs_matter::Matter;
 
 use crate::network::{Embedding, Network};
+use crate::private::Sealed;
 use crate::MatterStack;
 
 #[cfg(feature = "std")]
 pub use file::DirKvBlobStore;
 
 /// A perist API that needs to be implemented by the network impl which is used in the Matter stack.
-pub trait NetworkPersist {
+///
+/// The trait is sealed and has only two implementations:
+/// - `()` - which is used with the `Eth` network
+/// - `&NetworkContext` - which is used with the `WirelessBle` network.
+pub trait NetworkPersist: Sealed {
     /// Reset all networks, removing all stored data from the memory
     async fn reset(&mut self) -> Result<(), Error>;
 
@@ -37,30 +42,9 @@ pub trait NetworkPersist {
     async fn wait_state_changed(&self);
 }
 
-impl<T> NetworkPersist for &mut T
-where
-    T: NetworkPersist,
-{
-    async fn reset(&mut self) -> Result<(), Error> {
-        T::reset(self).await
-    }
-
-    async fn load(&mut self, data: &[u8]) -> Result<(), Error> {
-        T::load(self, data).await
-    }
-
-    async fn store<'a>(&mut self, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
-        T::store(self, buf).await
-    }
-
-    async fn wait_state_changed(&self) {
-        T::wait_state_changed(self).await
-    }
-}
-
 /// A no-op implementation of the `NetworksPersist` trait.
 ///
-/// Useful when the Matter stack is configured for Ethernet, as in that case
+/// Used when the Matter stack is configured for Ethernet, as in that case
 /// there is no network state that needs to be saved
 impl NetworkPersist for () {
     async fn reset(&mut self) -> Result<(), Error> {

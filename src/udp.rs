@@ -5,6 +5,7 @@ use edge_nal::{Readable, UdpReceive, UdpSend};
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::transport::network::{Address, NetworkReceive, NetworkSend};
 
+/// UDP transport implementation for edge-nal
 pub struct Udp<T>(pub T);
 
 impl<T> NetworkSend for Udp<T>

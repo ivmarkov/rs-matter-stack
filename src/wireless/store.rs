@@ -15,6 +15,7 @@ use rs_matter::utils::sync::blocking::Mutex;
 use rs_matter::utils::sync::Notification;
 
 use crate::persist::NetworkPersist;
+use crate::private::Sealed;
 
 use super::proxy::ControllerProxy;
 use super::traits::WirelessData;
@@ -273,6 +274,14 @@ where
     fn default() -> Self {
         Self::new()
     }
+}
+
+impl<const N: usize, M, T> Sealed for &NetworkContext<N, M, T>
+where
+    M: RawMutex,
+    T: WirelessData,
+    T::NetworkCredentials: Clone + for<'a> FromTLV<'a> + ToTLV,
+{
 }
 
 impl<const N: usize, M, T> NetworkPersist for &NetworkContext<N, M, T>
