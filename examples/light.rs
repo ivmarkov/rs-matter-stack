@@ -1,4 +1,4 @@
-//! An example utilizing the `WifiMatterStack` struct.
+//! An example utilizing the `WifiNCMatterStack` struct.
 //!
 //! As the name suggests, this Matter stack assembly uses Wifi as the main transport
 //! (and thus also BLE for commissioning).
@@ -26,10 +26,9 @@ use rs_matter::utils::sync::blocking::raw::StdRawMutex;
 use rs_matter::BasicCommData;
 
 use rs_matter_stack::netif::UnixNetif;
-//use rs_matter_stack::modem::DummyLinuxModem;
 use rs_matter_stack::persist::{new_kv, DirKvBlobStore, KvBlobBuf};
 use rs_matter_stack::wireless::{BuiltinBle, DummyWireless};
-use rs_matter_stack::WifiMatterStack;
+use rs_matter_stack::WifiNCMatterStack;
 
 use static_cell::StaticCell;
 
@@ -47,7 +46,7 @@ fn main() -> Result<(), Error> {
     // as we'll run it in this thread
     let stack = MATTER_STACK
         .uninit()
-        .init_with(WifiMatterStack::init_default(
+        .init_with(WifiNCMatterStack::init_default(
             &BasicInfoConfig {
                 vid: 0xFFF1,
                 pid: 0x8001,
@@ -136,7 +135,7 @@ fn main() -> Result<(), Error> {
 /// The Matter stack is allocated statically to avoid
 /// program stack blowups.
 /// It is also a mandatory requirement when the `WifiBle` stack variation is used.
-static MATTER_STACK: StaticCell<WifiMatterStack<StdRawMutex, KvBlobBuf<()>>> = StaticCell::new();
+static MATTER_STACK: StaticCell<WifiNCMatterStack<StdRawMutex, KvBlobBuf<()>>> = StaticCell::new();
 
 const DEV_ATT: dev_att::HardCodedDevAtt = dev_att::HardCodedDevAtt::new();
 
@@ -148,7 +147,7 @@ const LIGHT_ENDPOINT_ID: u16 = 1;
 const NODE: Node = Node {
     id: 0,
     endpoints: &[
-        WifiMatterStack::<StdRawMutex, KvBlobBuf<()>>::root_metadata(),
+        WifiNCMatterStack::<StdRawMutex, KvBlobBuf<()>>::root_metadata(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
             device_types: &[DEV_TYPE_ON_OFF_LIGHT],
