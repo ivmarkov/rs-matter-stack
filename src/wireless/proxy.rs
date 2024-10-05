@@ -51,6 +51,7 @@ where
             ControllerExchange::Scan(_)
                 | ControllerExchange::Connect(_)
                 | ControllerExchange::ConnectedNetwork
+                | ControllerExchange::Stats
         )
     }
 }
