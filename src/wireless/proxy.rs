@@ -110,7 +110,7 @@ where
     {
         // Ensure that the controller is not already connected
         // Also, eagerly mark the controller as connected before returning the future,
-        // to to avoid other futures faster than ours still using the controller
+        // so as to avoid other futures faster than ours still using the controller
         // in a disconnected state
         self.connected.modify(|connected| {
             if !*connected {
@@ -124,6 +124,7 @@ where
         Ok(async move {
             let _guard = scopeguard::guard((), |_| {
                 self.connected.modify(|connected| {
+                    assert!(*connected);
                     *connected = false;
                     (true, ())
                 });
