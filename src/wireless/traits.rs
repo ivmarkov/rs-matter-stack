@@ -30,9 +30,6 @@ pub trait NetworkCredentials:
         + for<'a> TryFrom<&'a [u8], Error = Error>
         + 'static;
 
-    /// Return `true` if these credentials are for a Wifi network
-    fn is_wifi() -> bool;
-
     /// Return the network ID
     fn network_id(&self) -> &Self::NetworkId;
 }
@@ -95,10 +92,6 @@ impl TryFrom<&AddThreadNetworkRequest<'_>> for WifiCredentials {
 
 impl NetworkCredentials for WifiCredentials {
     type NetworkId = WifiSsid;
-
-    fn is_wifi() -> bool {
-        true
-    }
 
     fn network_id(&self) -> &Self::NetworkId {
         &self.ssid
@@ -177,10 +170,6 @@ impl TryFrom<&AddThreadNetworkRequest<'_>> for ThreadCredentials {
 
 impl NetworkCredentials for ThreadCredentials {
     type NetworkId = ThreadId;
-
-    fn is_wifi() -> bool {
-        false
-    }
 
     fn network_id(&self) -> &Self::NetworkId {
         todo!()
@@ -359,6 +348,9 @@ pub trait WirelessData: 'static {
 
     /// The type of the statistics (they are different for Wifi vs Thread)
     type Stats;
+
+    // Whether this wireless data is for Wifi networks (`true`) or Thread networks (`false`)
+    const WIFI: bool;
 }
 
 /// A struct implementing the `WirelessData` trait for Wifi networks.
@@ -368,6 +360,8 @@ impl WirelessData for WifiData {
     type NetworkCredentials = WifiCredentials;
     type ScanResult = WifiScanResult;
     type Stats = Option<WifiNwDiagData>;
+
+    const WIFI: bool = true;
 }
 
 /// A struct implementing the `WirelessData` trait for Thread networks.
@@ -377,6 +371,8 @@ impl WirelessData for ThreadData {
     type NetworkCredentials = ThreadCredentials;
     type ScanResult = ThreadScanResult;
     type Stats = ();
+
+    const WIFI: bool = false;
 }
 
 /// A trait representing a wireless configuration, i.e. what data (Wifi or Thread) and

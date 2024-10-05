@@ -69,7 +69,7 @@ where
     ) -> Result<(), Error> {
         if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
-                if <T::Data as WirelessData>::NetworkCredentials::is_wifi() {
+                if <T::Data as WirelessData>::WIFI {
                     WIFI_CLUSTER.read(attr.attr_id, writer)
                 } else {
                     THR_CLUSTER.read(attr.attr_id, writer)

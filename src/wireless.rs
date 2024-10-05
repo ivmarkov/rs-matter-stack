@@ -1,6 +1,8 @@
 use core::future::Future;
 use core::pin::pin;
 
+use diag::thread::ThreadNwDiagCluster;
+use diag::wifi::WifiNwDiagCluster;
 use edge_nal::UdpBind;
 
 use embassy_futures::select::{select, select3, select4};
@@ -14,11 +16,8 @@ use rs_matter::data_model::objects::{
 };
 use rs_matter::data_model::root_endpoint;
 use rs_matter::data_model::root_endpoint::{handler, OperNwType, RootEndpointHandler};
-use rs_matter::data_model::sdm::thread_nw_diagnostics::{self, ThreadNwDiagCluster};
+use rs_matter::data_model::sdm::thread_nw_diagnostics;
 use rs_matter::data_model::sdm::wifi_nw_diagnostics;
-use rs_matter::data_model::sdm::wifi_nw_diagnostics::{
-    WiFiSecurity, WiFiVersion, WifiNwDiagCluster, WifiNwDiagData,
-};
 use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::tlv::{FromTLV, ToTLV};
@@ -42,6 +41,7 @@ use crate::wireless::traits::{
 use crate::MatterStack;
 
 pub mod comm;
+pub mod diag;
 pub mod mgmt;
 pub mod proxy;
 pub mod store;
@@ -361,7 +361,7 @@ where
     }
 }
 
-impl<'a, M, C, E> MatterStack<'a, WirelessBle<M, Wifi<C>, E>>
+impl<M, C, E> MatterStack<'_, WirelessBle<M, Wifi<C>, E>>
 where
     M: RawMutex + Send + Sync + 'static,
     C: ConcurrencyMode,
@@ -386,14 +386,7 @@ where
             wifi_nw_diagnostics::ID,
             HandlerCompat(WifiNwDiagCluster::new(
                 Dataver::new_rand(self.matter().rand()),
-                // TODO: Update with actual information
-                WifiNwDiagData {
-                    bssid: [0; 6],
-                    security_type: WiFiSecurity::Unspecified,
-                    wifi_version: WiFiVersion::B,
-                    channel_number: 20,
-                    rssi: 0,
-                },
+                &self.network.network_context.controller_proxy,
             )),
             C::CONCURRENT,
             self.matter().rand(),
@@ -401,7 +394,7 @@ where
     }
 }
 
-impl<'a, M, C, E> MatterStack<'a, WirelessBle<M, Thread<C>, E>>
+impl<M, C, E> MatterStack<'_, WirelessBle<M, Thread<C>, E>>
 where
     M: RawMutex + Send + Sync + 'static,
     C: ConcurrencyMode,
@@ -428,8 +421,7 @@ where
             thread_nw_diagnostics::ID,
             HandlerCompat(ThreadNwDiagCluster::new(
                 Dataver::new_rand(self.matter().rand()),
-                // TODO: Update with actual information
-                todo!(),
+                &self.network.network_context.controller_proxy,
             )),
             C::CONCURRENT,
             self.matter().rand(),
@@ -441,12 +433,12 @@ where
 pub type WifiRootEndpointHandler<'a, M, T> = RootEndpointHandler<
     'a,
     comm::WirelessNwCommCluster<'a, MAX_WIRELESS_NETWORKS, M, T>,
-    HandlerCompat<WifiNwDiagCluster>,
+    HandlerCompat<WifiNwDiagCluster<M, T>>,
 >;
 
 /// The root endpoint handler for a Thread network.
 pub type ThreadRootEndpointHandler<'a, M, T> = RootEndpointHandler<
     'a,
     comm::WirelessNwCommCluster<'a, MAX_WIRELESS_NETWORKS, M, T>,
-    HandlerCompat<ThreadNwDiagCluster<'a>>,
+    HandlerCompat<ThreadNwDiagCluster<M, T>>,
 >;

@@ -244,7 +244,7 @@ where
                         callback(Some(r))?
                     }
 
-                    callback(None);
+                    callback(None)?;
 
                     Ok(())
                 }

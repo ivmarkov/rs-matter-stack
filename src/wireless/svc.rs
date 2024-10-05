@@ -87,9 +87,7 @@ where
             }
         }
 
-        callback(None);
-
-        Ok(())
+        callback(None)
     }
 
     async fn connect(
