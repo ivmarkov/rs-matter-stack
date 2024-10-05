@@ -256,7 +256,7 @@ where
                         .network
                         .network_context
                         .controller_proxy
-                        .process_with(&mut controller));
+                        .process_with(&mut controller)?);
 
                     select4(
                         &mut netif_task,
@@ -280,7 +280,7 @@ where
                         .network
                         .network_context
                         .controller_proxy
-                        .process_with(&mut controller));
+                        .process_with(&mut controller)?);
 
                     select4(
                         &mut netif_task,
@@ -314,7 +314,9 @@ where
 
                 info!("Wireless driver started");
 
-                self.matter().disable_commissioning()?;
+                if commissioned {
+                    self.matter().disable_commissioning()?;
+                }
 
                 let mut netif_task = pin!(netif.run());
                 let mut net_task = pin!(self.run_oper_net(
@@ -327,7 +329,7 @@ where
                     .network
                     .network_context
                     .controller_proxy
-                    .process_with(&mut controller));
+                    .process_with(&mut controller)?);
 
                 select4(
                     &mut netif_task,

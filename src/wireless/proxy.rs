@@ -2,6 +2,7 @@
 //!
 //! Necessary because the wireless clusters have a different life-cycle from the controller.
 
+use core::future::Future;
 use core::pin::pin;
 
 use embassy_futures::select::{select, Either};
@@ -66,7 +67,6 @@ where
 {
     connected: Signal<M, bool>,
     pipe: IfMutex<M, RefCell<ControllerExchange<T>>>,
-    lock: IfMutex<M, ()>,
 }
 
 impl<M, T> Default for ControllerProxy<M, T>
@@ -89,7 +89,6 @@ where
         Self {
             connected: Signal::new(false),
             pipe: IfMutex::new(RefCell::new(ControllerExchange::Empty)),
-            lock: IfMutex::new(()),
         }
     }
 
@@ -97,73 +96,83 @@ where
         init!(Self {
             connected <- Signal::init(false),
             pipe <- IfMutex::init(RefCell::init(ControllerExchange::Empty)),
-            lock <- IfMutex::init(()),
         })
     }
 
     /// Connect the proxy to an active controller
-    pub async fn process_with<C>(&self, mut controller: C) -> Result<(), Error>
+    pub fn process_with<'a, C>(
+        &'a self,
+        mut controller: C,
+    ) -> Result<impl Future<Output = Result<(), Error>> + 'a, Error>
     where
-        C: Controller<Data = T>,
+        C: Controller<Data = T> + 'a,
         T::ScanResult: Clone,
     {
-        let _lock = self.lock.lock().await;
-
-        let _guard = scopeguard::guard((), |_| {
-            self.connected.modify(|connected| {
-                *connected = false;
-                (true, ())
-            });
-        });
-
+        // Ensure that the controller is not already connected
+        // Also, eagerly mark the controller as connected before returning the future,
+        // to to avoid other futures faster than ours still using the controller
+        // in a disconnected state
         self.connected.modify(|connected| {
-            *connected = true;
-            (true, ())
-        });
-
-        loop {
-            let pipe = self.pipe.lock_if(|data| data.borrow().is_command()).await;
-
-            let command =
-                core::mem::replace(&mut *pipe.borrow_mut(), ControllerExchange::Processing);
-
-            match command {
-                ControllerExchange::Connect(creds) => {
-                    let result = controller.connect(&creds).await;
-
-                    *pipe.borrow_mut() = ControllerExchange::ConnectResult(result);
-                }
-                ControllerExchange::ConnectedNetwork => {
-                    let result = controller.connected_network().await;
-
-                    *pipe.borrow_mut() = ControllerExchange::ConnectedNetworkResult(result);
-                }
-                ControllerExchange::Scan(network_id) => {
-                    let mut vec = Vec::new();
-
-                    let result = controller
-                        .scan(network_id.as_ref(), |result| {
-                            if let Some(result) = result {
-                                let _ = vec.push(result.clone());
-                            }
-
-                            Ok(())
-                        })
-                        .await;
-
-                    match result {
-                        Ok(_) => *pipe.borrow_mut() = ControllerExchange::ScanResult(Ok(vec)),
-                        Err(e) => *pipe.borrow_mut() = ControllerExchange::ScanResult(Err(e)),
-                    }
-                }
-                ControllerExchange::Stats => {
-                    let result = controller.stats().await;
-
-                    *pipe.borrow_mut() = ControllerExchange::StatsResult(result);
-                }
-                _ => unreachable!(),
+            if !*connected {
+                *connected = true;
+                (true, Ok::<_, Error>(()))
+            } else {
+                (false, Err(ErrorCode::Busy.into()))
             }
-        }
+        })?;
+
+        Ok(async move {
+            let _guard = scopeguard::guard((), |_| {
+                self.connected.modify(|connected| {
+                    *connected = false;
+                    (true, ())
+                });
+            });
+
+            loop {
+                let pipe = self.pipe.lock_if(|data| data.borrow().is_command()).await;
+
+                let command =
+                    core::mem::replace(&mut *pipe.borrow_mut(), ControllerExchange::Processing);
+
+                match command {
+                    ControllerExchange::Connect(creds) => {
+                        let result = controller.connect(&creds).await;
+
+                        *pipe.borrow_mut() = ControllerExchange::ConnectResult(result);
+                    }
+                    ControllerExchange::ConnectedNetwork => {
+                        let result = controller.connected_network().await;
+
+                        *pipe.borrow_mut() = ControllerExchange::ConnectedNetworkResult(result);
+                    }
+                    ControllerExchange::Scan(network_id) => {
+                        let mut vec = Vec::new();
+
+                        let result = controller
+                            .scan(network_id.as_ref(), |result| {
+                                if let Some(result) = result {
+                                    let _ = vec.push(result.clone());
+                                }
+
+                                Ok(())
+                            })
+                            .await;
+
+                        match result {
+                            Ok(_) => *pipe.borrow_mut() = ControllerExchange::ScanResult(Ok(vec)),
+                            Err(e) => *pipe.borrow_mut() = ControllerExchange::ScanResult(Err(e)),
+                        }
+                    }
+                    ControllerExchange::Stats => {
+                        let result = controller.stats().await;
+
+                        *pipe.borrow_mut() = ControllerExchange::StatsResult(result);
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        })
     }
 
     async fn pipe<P, O>(&self, predicate: P, modifier: O) -> bool
