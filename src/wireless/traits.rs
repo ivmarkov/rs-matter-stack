@@ -1,6 +1,6 @@
 //! Types and traits for wireless network commissioning and operation
 
-use core::fmt::{self, Display};
+use core::fmt::{self, Debug, Display};
 use core::marker::PhantomData;
 
 use edge_nal::UdpBind;
@@ -20,11 +20,13 @@ pub trait NetworkCredentials:
     for<'a> TryFrom<&'a AddWifiNetworkRequest<'a>, Error = Error>
     + for<'a> TryFrom<&'a AddThreadNetworkRequest<'a>, Error = Error>
     + Clone
+    + Debug
     + 'static
 {
     /// The ID of the network (SSID for Wifi and Extended PAN ID for Thread)
     type NetworkId: Display
         + Clone
+        + Debug
         + PartialEq
         + AsRef<[u8]>
         + for<'a> TryFrom<&'a [u8], Error = Error>
@@ -337,21 +339,22 @@ where
 }
 
 /// A trait representing all DTOs required for wireless network commissioning and operation.
-pub trait WirelessData: 'static {
+pub trait WirelessData: Debug + 'static {
     /// The type of the network credentials (e.g. WifiCredentials or ThreadCredentials)
     type NetworkCredentials: NetworkCredentials + Clone;
 
     /// The type of the scan result (e.g. WiFiInter faceScanResult or ThreadInterfaceScanResult)
-    type ScanResult: Clone;
+    type ScanResult: Debug + Clone;
 
     /// The type of the statistics (they are different for Wifi vs Thread)
-    type Stats;
+    type Stats: Debug;
 
     // Whether this wireless data is for Wifi networks (`true`) or Thread networks (`false`)
     const WIFI: bool;
 }
 
 /// A struct implementing the `WirelessData` trait for Wifi networks.
+#[derive(Debug)]
 pub struct WifiData;
 
 impl WirelessData for WifiData {
@@ -363,6 +366,7 @@ impl WirelessData for WifiData {
 }
 
 /// A struct implementing the `WirelessData` trait for Thread networks.
+#[derive(Debug)]
 pub struct ThreadData;
 
 impl WirelessData for ThreadData {
@@ -384,6 +388,7 @@ pub trait WirelessConfig: 'static {
     const CONCURRENT: bool;
 }
 
+#[derive(Debug)]
 pub struct Wifi<T = ()>(T);
 
 impl<T: 'static> WirelessConfig for Wifi<T>
@@ -395,6 +400,7 @@ where
     const CONCURRENT: bool = T::CONCURRENT;
 }
 
+#[derive(Debug)]
 pub struct Thread<T = ()>(T);
 
 impl<T: 'static> WirelessConfig for Thread<T>

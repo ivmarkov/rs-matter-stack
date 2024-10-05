@@ -8,7 +8,8 @@ use core::pin::pin;
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use log::warn;
+use log::{debug, warn};
+
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::{init, Init};
@@ -17,6 +18,7 @@ use rs_matter::utils::sync::{IfMutex, Signal};
 
 use super::traits::{Controller, NetworkCredentials, WirelessData};
 
+#[derive(Debug)]
 enum ControllerExchange<T>
 where
     T: WirelessData,
@@ -138,16 +140,26 @@ where
 
                 match command {
                     ControllerExchange::Connect(creds) => {
+                        debug!("Connect request: {creds:?}");
+
                         let result = controller.connect(&creds).await;
+
+                        debug!("Sending connect reply: {result:?}");
 
                         *pipe.borrow_mut() = ControllerExchange::ConnectResult(result);
                     }
                     ControllerExchange::ConnectedNetwork => {
+                        debug!("Connected network request");
+
                         let result = controller.connected_network().await;
+
+                        debug!("Sending connected network reply: {result:?}");
 
                         *pipe.borrow_mut() = ControllerExchange::ConnectedNetworkResult(result);
                     }
                     ControllerExchange::Scan(network_id) => {
+                        debug!("Scan request: {network_id:?}");
+
                         let mut vec = Vec::new();
 
                         let result = controller
@@ -160,13 +172,19 @@ where
                             })
                             .await;
 
+                        debug!("Sending scan reply: {result:?}");
+
                         match result {
                             Ok(_) => *pipe.borrow_mut() = ControllerExchange::ScanResult(Ok(vec)),
                             Err(e) => *pipe.borrow_mut() = ControllerExchange::ScanResult(Err(e)),
                         }
                     }
                     ControllerExchange::Stats => {
+                        debug!("Stats request");
+
                         let result = controller.stats().await;
+
+                        debug!("Sending stats reply: {result:?}");
 
                         *pipe.borrow_mut() = ControllerExchange::StatsResult(result);
                     }
@@ -197,6 +215,8 @@ where
     }
 
     async fn command(&self, command: ControllerExchange<T>) -> Option<ControllerExchange<T>> {
+        debug!("Sending command: {command:?}");
+
         let connected = self
             .pipe(
                 |data| matches!(*data, ControllerExchange::Empty),
@@ -205,6 +225,7 @@ where
             .await;
 
         if !connected {
+            debug!("Not connected");
             return None;
         }
 
@@ -217,8 +238,11 @@ where
             .await;
 
         if !connected {
+            debug!("Not connected");
             return None;
         }
+
+        debug!("Got reply: {reply:?}");
 
         reply
     }

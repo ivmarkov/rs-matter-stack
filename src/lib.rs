@@ -17,7 +17,7 @@ use edge_nal::{UdpBind, UdpSplit};
 use embassy_futures::select::{select, select4, Either4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
-use log::info;
+use log::{info, trace};
 
 use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
 use rs_matter::data_model::core::IMBuffer;
@@ -338,9 +338,12 @@ where
 
             let mut netif_changed_task = pin!(async {
                 loop {
+                    trace!("Waiting...");
                     if netif_conf != netif.get_conf().await? {
+                        trace!("Change detected: {:?}", netif_conf);
                         break Ok::<_, Error>(());
                     } else {
+                        trace!("No change");
                         netif.wait_conf_change().await?;
                     }
                 }
