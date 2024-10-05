@@ -14,10 +14,14 @@ use rs_matter::transport::network::btp::GattPeripheral;
 use rs_matter::utils::storage::Vec;
 
 use crate::netif::{Netif, NetifRun};
+use crate::private::Sealed;
 
 /// A trait representing the credentials of a wireless network (Wifi or Thread).
+///
+/// The trait is sealed and has only two implemewntations: `WifiCredentials` and `ThreadCredentials`.
 pub trait NetworkCredentials:
-    for<'a> TryFrom<&'a AddWifiNetworkRequest<'a>, Error = Error>
+    Sealed
+    + for<'a> TryFrom<&'a AddWifiNetworkRequest<'a>, Error = Error>
     + for<'a> TryFrom<&'a AddThreadNetworkRequest<'a>, Error = Error>
     + Clone
     + Debug
@@ -91,6 +95,8 @@ impl TryFrom<&AddThreadNetworkRequest<'_>> for WifiCredentials {
         Err(ErrorCode::InvalidCommand.into())
     }
 }
+
+impl Sealed for WifiCredentials {}
 
 impl NetworkCredentials for WifiCredentials {
     type NetworkId = WifiSsid;
@@ -169,6 +175,8 @@ impl TryFrom<&AddThreadNetworkRequest<'_>> for ThreadCredentials {
         Ok(Self { op_dataset })
     }
 }
+
+impl Sealed for ThreadCredentials {}
 
 impl NetworkCredentials for ThreadCredentials {
     type NetworkId = ThreadId;
@@ -339,7 +347,9 @@ where
 }
 
 /// A trait representing all DTOs required for wireless network commissioning and operation.
-pub trait WirelessData: Debug + 'static {
+///
+/// The trait is sealed and has only two implementations: `WifiData` and `ThreadData`.
+pub trait WirelessData: Sealed + Debug + 'static {
     /// The type of the network credentials (e.g. WifiCredentials or ThreadCredentials)
     type NetworkCredentials: NetworkCredentials + Clone;
 
@@ -357,6 +367,8 @@ pub trait WirelessData: Debug + 'static {
 #[derive(Debug)]
 pub struct WifiData;
 
+impl Sealed for WifiData {}
+
 impl WirelessData for WifiData {
     type NetworkCredentials = WifiCredentials;
     type ScanResult = WifiScanResult;
@@ -369,6 +381,8 @@ impl WirelessData for WifiData {
 #[derive(Debug)]
 pub struct ThreadData;
 
+impl Sealed for ThreadData {}
+
 impl WirelessData for ThreadData {
     type NetworkCredentials = ThreadCredentials;
     type ScanResult = ThreadScanResult;
@@ -379,7 +393,9 @@ impl WirelessData for ThreadData {
 
 /// A trait representing a wireless configuration, i.e. what data (Wifi or Thread) and
 /// whether the wireless network should be used in concurrent commissioning mode or not.
-pub trait WirelessConfig: 'static {
+///
+/// The trait is sealed and has only two implementations: `Wifi<T>` and `Thread<T>`.
+pub trait WirelessConfig: Sealed + 'static {
     /// The type of the wireless data (WifiData or ThreadData)
     type Data: WirelessData;
 
@@ -388,8 +404,16 @@ pub trait WirelessConfig: 'static {
     const CONCURRENT: bool;
 }
 
+/// A marker trait for wireless configurations that will do concurrent commissioning
+///
+/// The trait is sealed and has only two implementations: `Wifi<()>` and `Thread<()>`.
+pub trait ConcurrentWirelessConfig: WirelessConfig {}
+
+/// A struct representing a Wifi wireless configuration
 #[derive(Debug)]
 pub struct Wifi<T = ()>(T);
+
+impl<T: 'static> Sealed for Wifi<T> {}
 
 impl<T: 'static> WirelessConfig for Wifi<T>
 where
@@ -400,8 +424,13 @@ where
     const CONCURRENT: bool = T::CONCURRENT;
 }
 
+impl ConcurrentWirelessConfig for Wifi {}
+
+/// A struct representing a Thread wireless configuration
 #[derive(Debug)]
 pub struct Thread<T = ()>(T);
+
+impl<T: 'static> Sealed for Thread<T> {}
 
 impl<T: 'static> WirelessConfig for Thread<T>
 where
@@ -412,9 +441,19 @@ where
     const CONCURRENT: bool = true;
 }
 
-pub trait ConcurrencyMode: 'static {
+impl ConcurrentWirelessConfig for Thread {}
+
+/// A marker trait representing whether the wireless configuration
+/// indicates whether concurrent or non-concurrent commissioning will be used.
+///
+/// The trait is sealed and has only two implementations:
+/// - `()` which indicates a wireless configuration for concurrent provisioning
+/// - `NC` which indicates a wireless configuration for non-concurrent provisioning
+pub trait ConcurrencyMode: Sealed + 'static {
     const CONCURRENT: bool;
 }
+
+impl Sealed for () {}
 
 impl ConcurrencyMode for () {
     const CONCURRENT: bool = true;
@@ -422,6 +461,8 @@ impl ConcurrencyMode for () {
 
 #[derive(Debug)]
 pub struct NC;
+
+impl Sealed for NC {}
 
 impl ConcurrencyMode for NC {
     const CONCURRENT: bool = false;

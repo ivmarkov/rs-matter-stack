@@ -92,7 +92,7 @@ where
         )
     }
 
-    /// Resets the Matter instance to the factory defaults putting it into a
+    /// Reset the Matter instance to the factory defaults putting it into a
     /// Commissionable mode.
     pub fn reset(&self) -> Result<(), Error> {
         // TODO: Reset fabrics and ACLs
@@ -103,9 +103,8 @@ where
     /// Run the Matter stack for Ethernet network.
     ///
     /// Parameters:
+    /// - `netif` - a user-provided `Netif` implementation for the Ethernet network
     /// - `persist` - a user-provided `Persist` implementation
-    /// - `netif` - a user-provided `Netif` implementation
-    /// - `dev_comm` - the commissioning data
     /// - `handler` - a user-provided DM handler implementation
     /// - `user` - a user-provided future that will be polled only when the netif interface is up
     pub async fn run<'d, I, P, H, U>(

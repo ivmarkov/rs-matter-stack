@@ -65,6 +65,11 @@ pub mod udp;
 pub mod utils;
 pub mod wireless;
 
+mod private {
+    /// A marker super-trait for sealed traits
+    pub trait Sealed {}
+}
+
 const MAX_SUBSCRIPTIONS: usize = 3;
 const MAX_IM_BUFFERS: usize = 10;
 const MAX_RESPONDERS: usize = 4;
