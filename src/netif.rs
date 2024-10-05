@@ -137,6 +137,12 @@ impl<U> DummyNetif<U> {
     }
 }
 
+impl<U> NetifRun for DummyNetif<U> {
+    async fn run(&self) -> Result<(), Error> {
+        core::future::pending().await
+    }
+}
+
 #[cfg(feature = "std")]
 impl Default for DummyNetif<edge_nal_std::Stack> {
     fn default() -> Self {
@@ -185,7 +191,9 @@ mod unix {
     use nix::net::if_::InterfaceFlags;
     use nix::sys::socket::{SockaddrIn6, SockaddrStorage};
 
-    use super::{Netif, NetifConf};
+    use rs_matter::error::Error;
+
+    use super::{Netif, NetifConf, NetifRun};
 
     bitflags! {
         /// DefaultNetif is a set of flags that can be used to filter network interfaces
@@ -355,15 +363,21 @@ mod unix {
     }
 
     impl Netif for UnixNetif {
-        async fn get_conf(&self) -> Result<Option<NetifConf>, rs_matter::error::Error> {
+        async fn get_conf(&self) -> Result<Option<NetifConf>, Error> {
             Ok(UnixNetif::get_conf(self))
         }
 
-        async fn wait_conf_change(&self) -> Result<(), rs_matter::error::Error> {
+        async fn wait_conf_change(&self) -> Result<(), Error> {
             // Just poll every two seconds
             Timer::after(Duration::from_secs(2)).await;
 
             Ok(())
+        }
+    }
+
+    impl NetifRun for UnixNetif {
+        async fn run(&self) -> Result<(), Error> {
+            core::future::pending().await
         }
     }
 

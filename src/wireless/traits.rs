@@ -265,31 +265,29 @@ where
 /// A no-op controller.
 ///
 /// Useful for simulating non-concurrent wireless connectivity in tests and examples.
-pub struct DisconnectedController<T>(PhantomData<T>, T::Stats)
+pub struct DisconnectedController<T>(PhantomData<T>)
 where
-    T: WirelessData;
+    T: WirelessData,
+    T::Stats: Default;
+
+impl<T> Default for DisconnectedController<T>
+where
+    T: WirelessData,
+    T::Stats: Default,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl<T> DisconnectedController<T>
 where
     T: WirelessData,
+    T::Stats: Default,
 {
     /// Create a new disconnected controller
-    pub const fn new(stats: T::Stats) -> Self {
-        Self(PhantomData, stats)
-    }
-}
-
-impl DisconnectedController<WifiData> {
-    /// Create a new disconnected controller for Wifi networks
-    pub const fn new_wifi() -> Self {
-        Self::new(None)
-    }
-}
-
-impl DisconnectedController<ThreadData> {
-    /// Create a new disconnected controller for Thread networks
-    pub const fn new_thread(stats: ()) -> Self {
-        Self::new(stats)
+    pub const fn new() -> Self {
+        Self(PhantomData)
     }
 }
 
@@ -297,7 +295,7 @@ impl<T> Controller for DisconnectedController<T>
 where
     T: WirelessData,
     T::ScanResult: Clone,
-    T::Stats: Clone,
+    T::Stats: Default,
 {
     type Data = T;
 
@@ -334,7 +332,7 @@ where
     }
 
     async fn stats(&mut self) -> Result<<Self::Data as WirelessData>::Stats, Error> {
-        Ok(self.1.clone())
+        Ok(Default::default())
     }
 }
 

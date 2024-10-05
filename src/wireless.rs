@@ -1,4 +1,5 @@
 use core::future::Future;
+use core::marker::PhantomData;
 use core::pin::pin;
 
 use diag::thread::ThreadNwDiagCluster;
@@ -10,10 +11,7 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use log::info;
 
-use proxy::ControllerProxy;
-use rs_matter::data_model::objects::{
-    AsyncHandler, AsyncMetadata, Dataver, Endpoint, HandlerCompat,
-};
+use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Dataver, Endpoint};
 use rs_matter::data_model::root_endpoint;
 use rs_matter::data_model::root_endpoint::{handler, OperNwType, RootEndpointHandler};
 use rs_matter::data_model::sdm::thread_nw_diagnostics;
@@ -26,7 +24,8 @@ use rs_matter::transport::network::NoNetwork;
 use rs_matter::utils::init::{init, Init};
 use rs_matter::utils::select::Coalesce;
 use traits::{
-    ConcurrencyMode, Thread, ThreadData, Wifi, WifiData, Wireless, WirelessConfig, WirelessData,
+    ConcurrencyMode, DisconnectedController, Thread, ThreadData, Wifi, WifiData, Wireless,
+    WirelessConfig, WirelessData,
 };
 
 use crate::netif::{Netif, NetifRun};
@@ -35,10 +34,13 @@ use crate::persist::Persist;
 use crate::utils::futures::IntoFaillble;
 use crate::wireless::mgmt::WirelessManager;
 use crate::wireless::store::NetworkContext;
-use crate::wireless::traits::{
-    Ble, Controller, NetworkCredentials, ThreadCredentials, WifiCredentials,
-};
+use crate::wireless::traits::{Ble, Controller, NetworkCredentials};
 use crate::MatterStack;
+
+use self::proxy::ControllerProxy;
+
+#[cfg(all(feature = "os", target_os = "linux"))]
+pub use bluez::*;
 
 pub mod comm;
 pub mod diag;
@@ -137,8 +139,8 @@ where
     }
 }
 
-pub type WifiMatterStack<'a, M, E> = MatterStack<'a, WirelessBle<M, WifiCredentials, E>>;
-pub type ThreadMatterStack<'a, M, E> = MatterStack<'a, WirelessBle<M, ThreadCredentials, E>>;
+pub type WifiMatterStack<'a, M, E> = MatterStack<'a, WirelessBle<M, Wifi, E>>;
+pub type ThreadMatterStack<'a, M, E> = MatterStack<'a, WirelessBle<M, Thread, E>>;
 
 impl<'a, M, T, E> MatterStack<'a, WirelessBle<M, T, E>>
 where
@@ -158,10 +160,10 @@ where
         Ok(())
     }
 
-    pub async fn run<'d, B, W, P, H, U>(
+    pub async fn run<'d, W, B, P, H, U>(
         &'static self,
-        ble: B,
         wireless: W,
+        ble: B,
         persist: P,
         handler: H,
         user: U,
@@ -181,7 +183,7 @@ where
 
         self.matter().reset_transport()?;
 
-        let mut net_task = pin!(self.run_net(ble, wireless));
+        let mut net_task = pin!(self.run_net(wireless, ble));
         let mut handler_task = pin!(self.run_handlers(persist, handler));
         let mut user_task = pin!(user);
 
@@ -190,10 +192,10 @@ where
             .await
     }
 
-    async fn run_net<'d, B, W>(&'static self, mut ble: B, mut wireless: W) -> Result<(), Error>
+    async fn run_net<'d, W, B>(&'static self, mut wireless: W, mut ble: B) -> Result<(), Error>
     where
-        B: Ble,
         W: Wireless<Data = T::Data>,
+        B: Ble,
         <W::Data as WirelessData>::ScanResult: Clone,
         <W::Data as WirelessData>::Stats: Default,
     {
@@ -217,7 +219,7 @@ where
                     info!("BLE driver started");
 
                     let mut netif_task = pin!(netif.run());
-                    let mut net_task = pin!(self.run_comm_net(&btp, &netif));
+                    let mut net_task = pin!(self.run_comm_net(&netif, &btp));
                     let mut mgr_task = pin!(mgr.run(&self.network.network_context));
                     let mut proxy_task = pin!(self
                         .network
@@ -308,14 +310,14 @@ where
         }
     }
 
-    async fn run_comm_net<'d, B, N>(
+    async fn run_comm_net<'d, N, B>(
         &self,
-        btp: &Btp<&'static BtpContext<M>, M, B>,
         mut netif: N,
+        btp: &Btp<&'static BtpContext<M>, M, B>,
     ) -> Result<(), Error>
     where
-        B: GattPeripheral,
         N: Netif + UdpBind,
+        B: GattPeripheral,
     {
         info!("Running Matter in concurrent commissioning mode (BLE and Wireless)");
 
@@ -384,10 +386,10 @@ where
                 &self.network.network_context.controller_proxy,
             ),
             wifi_nw_diagnostics::ID,
-            HandlerCompat(WifiNwDiagCluster::new(
+            WifiNwDiagCluster::new(
                 Dataver::new_rand(self.matter().rand()),
                 &self.network.network_context.controller_proxy,
-            )),
+            ),
             C::CONCURRENT,
             self.matter().rand(),
         )
@@ -419,10 +421,10 @@ where
                 &self.network.network_context.controller_proxy,
             ),
             thread_nw_diagnostics::ID,
-            HandlerCompat(ThreadNwDiagCluster::new(
+            ThreadNwDiagCluster::new(
                 Dataver::new_rand(self.matter().rand()),
                 &self.network.network_context.controller_proxy,
-            )),
+            ),
             C::CONCURRENT,
             self.matter().rand(),
         )
@@ -433,12 +435,76 @@ where
 pub type WifiRootEndpointHandler<'a, M, T> = RootEndpointHandler<
     'a,
     comm::WirelessNwCommCluster<'a, MAX_WIRELESS_NETWORKS, M, T>,
-    HandlerCompat<WifiNwDiagCluster<M, T>>,
+    WifiNwDiagCluster<M, T>,
 >;
 
 /// The root endpoint handler for a Thread network.
 pub type ThreadRootEndpointHandler<'a, M, T> = RootEndpointHandler<
     'a,
     comm::WirelessNwCommCluster<'a, MAX_WIRELESS_NETWORKS, M, T>,
-    HandlerCompat<ThreadNwDiagCluster<M, T>>,
+    ThreadNwDiagCluster<M, T>,
 >;
+
+/// A dummy wireless interface which returns a wireless controller
+/// which is always disconnected, and a network interface which is
+/// pre-existing.
+///
+/// Useful for testing the Matter stack without a real wireless interface.
+pub struct DummyWireless<T, N>(PhantomData<T>, N);
+
+impl<T, N> DummyWireless<T, N> {
+    /// Creates a new instance of the `DummyWireless` type
+    /// with the supplied network interface.
+    pub const fn new(netif: N) -> Self {
+        Self(PhantomData, netif)
+    }
+}
+
+impl<T, N> Wireless for DummyWireless<T, N>
+where
+    T: WirelessData,
+    T::Stats: Default,
+    N: Netif + NetifRun + UdpBind,
+{
+    type Data = T;
+
+    type Netif<'a> = &'a mut N
+    where
+        Self: 'a;
+
+    type Controller<'a> = DisconnectedController<T>
+    where
+        Self: 'a;
+
+    async fn start(&mut self) -> Result<(Self::Netif<'_>, Self::Controller<'_>), Error> {
+        Ok((&mut self.1, DisconnectedController::new()))
+    }
+}
+
+#[cfg(all(feature = "os", target_os = "linux"))]
+mod bluez {
+    use rs_matter::error::Error;
+    use rs_matter::transport::network::btp::BuiltinGattPeripheral;
+
+    use crate::wireless::traits::Ble;
+
+    /// A `Ble` trait implementation for the BlueZ GATT peripheral
+    /// which is built-in in `rs-matter`.
+    pub struct BuiltinBle<'a>(Option<&'a str>);
+
+    impl<'a> BuiltinBle<'a> {
+        pub const fn new(adapter: Option<&'a str>) -> Self {
+            Self(adapter)
+        }
+    }
+
+    impl<'a> Ble for BuiltinBle<'a> {
+        type Peripheral<'t> = BuiltinGattPeripheral
+        where
+            Self: 't;
+
+        async fn start(&mut self) -> Result<Self::Peripheral<'_>, Error> {
+            Ok(BuiltinGattPeripheral::new(self.0))
+        }
+    }
+}

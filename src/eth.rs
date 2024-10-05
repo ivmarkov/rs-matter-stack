@@ -108,17 +108,17 @@ where
     /// - `dev_comm` - the commissioning data
     /// - `handler` - a user-provided DM handler implementation
     /// - `user` - a user-provided future that will be polled only when the netif interface is up
-    pub async fn run<'d, H, P, I, U>(
+    pub async fn run<'d, I, P, H, U>(
         &self,
-        persist: P,
         netif: I,
+        persist: P,
         handler: H,
         user: U,
     ) -> Result<(), Error>
     where
-        H: AsyncHandler + AsyncMetadata,
-        P: Persist,
         I: Netif + UdpBind,
+        P: Persist,
+        H: AsyncHandler + AsyncMetadata,
         U: Future<Output = Result<(), Error>>,
     {
         info!("Matter Stack memory: {}B", core::mem::size_of_val(self));

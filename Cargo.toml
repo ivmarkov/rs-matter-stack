@@ -23,7 +23,7 @@ rs-matter = { path = "../rs-matter/rs-matter" }
 #edge-mdns = { path = "../edge-net/edge-mdns" }
 
 [features]
-default = []
+default = ["nix", "os"]
 zeroconf = ["os", "rs-matter/zeroconf"]
 os = ["backtrace", "rs-matter/os", "rs-matter/rustcrypto", "embassy-time/std", "embassy-time/generic-queue"]
 backtrace = ["std", "rs-matter/backtrace"]
