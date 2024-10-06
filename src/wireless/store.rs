@@ -14,7 +14,7 @@ use rs_matter::utils::storage::WriteBuf;
 use rs_matter::utils::sync::blocking::Mutex;
 use rs_matter::utils::sync::Notification;
 
-use crate::persist::NetworkPersist;
+use crate::persist::{Key, NetworkPersist};
 use crate::private::Sealed;
 
 use super::proxy::ControllerProxy;
@@ -290,6 +290,12 @@ where
     T: WirelessData,
     T::NetworkCredentials: Clone + for<'a> FromTLV<'a> + ToTLV,
 {
+    const KEY: crate::persist::Key = if T::WIFI {
+        Key::WifiNetworks
+    } else {
+        Key::ThreadNetworks
+    };
+
     async fn reset(&mut self) -> Result<(), Error> {
         NetworkContext::reset(self);
 

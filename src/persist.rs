@@ -1,3 +1,5 @@
+use core::fmt::{self, Display};
+
 use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
@@ -19,6 +21,8 @@ pub use file::DirKvBlobStore;
 /// - `()` - which is used with the `Eth` network
 /// - `&NetworkContext` - which is used with the `WirelessBle` network.
 pub trait NetworkPersist: Sealed {
+    const KEY: Key;
+
     /// Reset all networks, removing all stored data from the memory
     async fn reset(&mut self) -> Result<(), Error>;
 
@@ -47,6 +51,8 @@ pub trait NetworkPersist: Sealed {
 /// Used when the Matter stack is configured for Ethernet, as in that case
 /// there is no network state that needs to be saved
 impl NetworkPersist for () {
+    const KEY: Key = Key::EthNetworks; // Does not matter really as Ethernet networks do not have a persistence story
+
     async fn reset(&mut self) -> Result<(), Error> {
         Ok(())
     }
@@ -150,8 +156,10 @@ where
     pub async fn reset(&mut self) -> Result<(), Error> {
         // TODO: Reset fabrics
 
-        self.store.remove("fabrics").await?;
-        self.store.remove("networks").await?;
+        self.store.remove(Key::Fabrics).await?;
+        self.store.remove(Key::EthNetworks).await?;
+        self.store.remove(Key::WifiNetworks).await?;
+        self.store.remove(Key::ThreadNetworks).await?;
 
         self.networks.reset().await?;
 
@@ -163,11 +171,11 @@ where
         let mut buf = self.buf.get().await.unwrap();
         buf.resize_default(KV_BLOB_BUF_SIZE).unwrap();
 
-        if let Some(data) = self.store.load("fabrics", &mut buf).await? {
+        if let Some(data) = self.store.load(Key::Fabrics, &mut buf).await? {
             self.matter.load_fabrics(data)?;
         }
 
-        if let Some(data) = self.store.load("networks", &mut buf).await? {
+        if let Some(data) = self.store.load(C::KEY, &mut buf).await? {
             self.networks.load(data).await?;
         }
 
@@ -187,12 +195,12 @@ where
 
             if self.matter.fabrics_changed() {
                 if let Some(data) = self.matter.store_fabrics(&mut buf)? {
-                    self.store.store("fabrics", data).await?;
+                    self.store.store(Key::Fabrics, data).await?;
                 }
             }
 
             if let Some(data) = self.networks.store(&mut buf).await? {
-                self.store.store("networks", data).await?;
+                self.store.store(C::KEY, data).await?;
             }
         }
     }
@@ -216,26 +224,53 @@ where
     }
 }
 
+/// The keys the `KvBlobStore` trait uses to store the BLOBs.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[repr(u8)]
+pub enum Key {
+    Fabrics = 0,
+    EthNetworks = 1,
+    WifiNetworks = 2,
+    ThreadNetworks = 3,
+}
+
+impl AsRef<str> for Key {
+    fn as_ref(&self) -> &str {
+        match self {
+            Key::Fabrics => "fabrics",
+            Key::EthNetworks => "eth-networks",
+            Key::WifiNetworks => "wifi-networks",
+            Key::ThreadNetworks => "thread-networks",
+        }
+    }
+}
+
+impl Display for Key {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_ref())
+    }
+}
+
 /// A trait representing a key-value BLOB storage.
 pub trait KvBlobStore {
-    async fn load<'a>(&mut self, key: &str, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error>;
-    async fn store(&mut self, key: &str, value: &[u8]) -> Result<(), Error>;
-    async fn remove(&mut self, key: &str) -> Result<(), Error>;
+    async fn load<'a>(&mut self, key: Key, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error>;
+    async fn store(&mut self, key: Key, value: &[u8]) -> Result<(), Error>;
+    async fn remove(&mut self, key: Key) -> Result<(), Error>;
 }
 
 impl<T> KvBlobStore for &mut T
 where
     T: KvBlobStore,
 {
-    async fn load<'a>(&mut self, key: &str, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
+    async fn load<'a>(&mut self, key: Key, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
         T::load(self, key, buf).await
     }
 
-    async fn store(&mut self, key: &str, value: &[u8]) -> Result<(), Error> {
+    async fn store(&mut self, key: Key, value: &[u8]) -> Result<(), Error> {
         T::store(self, key, value).await
     }
 
-    async fn remove(&mut self, key: &str) -> Result<(), Error> {
+    async fn remove(&mut self, key: Key) -> Result<(), Error> {
         T::remove(self, key).await
     }
 }
@@ -262,7 +297,7 @@ where
 mod file {
     use rs_matter::error::Error;
 
-    use super::KvBlobStore;
+    use super::{Key, KvBlobStore};
 
     extern crate std;
 
@@ -282,7 +317,7 @@ mod file {
         }
 
         /// Load a BLOB with the specified key from the directory.
-        pub fn load<'b>(&self, key: &str, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
+        pub fn load<'b>(&self, key: Key, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
             use log::info;
             use std::io::Read;
 
@@ -317,7 +352,7 @@ mod file {
         }
 
         /// Store a BLOB with the specified key in the directory.
-        fn store(&self, key: &str, data: &[u8]) -> Result<(), Error> {
+        fn store(&self, key: Key, data: &[u8]) -> Result<(), Error> {
             use log::info;
             use std::io::Write;
 
@@ -336,7 +371,7 @@ mod file {
 
         /// Remove a BLOB with the specified key from the directory.
         /// If the BLOB does not exist, this method does nothing.
-        fn remove(&self, key: &str) -> Result<(), Error> {
+        fn remove(&self, key: Key) -> Result<(), Error> {
             use log::info;
 
             let path = self.key_path(key);
@@ -348,8 +383,8 @@ mod file {
             Ok(())
         }
 
-        fn key_path(&self, key: &str) -> std::path::PathBuf {
-            self.0.join(key)
+        fn key_path(&self, key: Key) -> std::path::PathBuf {
+            self.0.join(key.as_ref())
         }
     }
 
@@ -362,17 +397,17 @@ mod file {
     impl KvBlobStore for DirKvBlobStore {
         async fn load<'a>(
             &mut self,
-            key: &str,
+            key: Key,
             buf: &'a mut [u8],
         ) -> Result<Option<&'a [u8]>, Error> {
             DirKvBlobStore::load(self, key, buf)
         }
 
-        async fn store(&mut self, key: &str, value: &[u8]) -> Result<(), Error> {
+        async fn store(&mut self, key: Key, value: &[u8]) -> Result<(), Error> {
             DirKvBlobStore::store(self, key, value)
         }
 
-        async fn remove(&mut self, key: &str) -> Result<(), Error> {
+        async fn remove(&mut self, key: Key) -> Result<(), Error> {
             DirKvBlobStore::remove(self, key)
         }
     }
