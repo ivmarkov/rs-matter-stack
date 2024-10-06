@@ -304,7 +304,10 @@ where
 
             info!("Wireless driver started");
 
-            self.run_net_with_controller(controller, netif, ble).await
+            let mut netif_task = pin!(netif.run());
+            let mut net_task = pin!(self.run_net_with_controller(controller, &netif, ble));
+
+            select(&mut netif_task, &mut net_task).coalesce().await
         } else {
             loop {
                 let commissioned = self.is_commissioned().await?;
