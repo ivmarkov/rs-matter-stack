@@ -24,26 +24,27 @@ pub trait NetworkPersist: Sealed {
     const KEY: Key;
 
     /// Reset all networks, removing all stored data from the memory
-    async fn reset(&mut self) -> Result<(), Error>;
+    fn reset(&mut self) -> Result<(), Error>;
 
     /// Load the networks from the provided data BLOB
-    async fn load(&mut self, data: &[u8]) -> Result<(), Error>;
+    fn load(&mut self, data: &[u8]) -> Result<(), Error>;
 
     /// Save the networks as BLOB using the provided data buffer
     ///
-    /// Return a sub-slice of the buffer which contains the data to be written
-    /// to the non-volatile storage.
+    /// Return the length of the data written in the provided buffer.
+    fn store(&mut self, buf: &mut [u8]) -> Result<usize, Error>;
+
+    /// Check if the networks have changed.
     ///
-    /// If the networks have not changed since the last call to this method,
-    /// this method should return `None`.
-    async fn store<'a>(&mut self, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error>;
+    /// This method should return `Ok(true)` if the networks have changed since the last call to `changed`.
+    fn changed(&mut self) -> Result<bool, Error>;
 
     /// Wait until the networks have changed.
     ///
     /// This method might return even if the networks have not changed,
     /// so the ultimate litmus test whether the networks did indeed change is trying to call
     /// `store` and then inspecting if it returned something.
-    async fn wait_state_changed(&self);
+    async fn wait_state_changed(&mut self);
 }
 
 /// A no-op implementation of the `NetworksPersist` trait.
@@ -53,19 +54,23 @@ pub trait NetworkPersist: Sealed {
 impl NetworkPersist for () {
     const KEY: Key = Key::EthNetworks; // Does not matter really as Ethernet networks do not have a persistence story
 
-    async fn reset(&mut self) -> Result<(), Error> {
+    fn reset(&mut self) -> Result<(), Error> {
         Ok(())
     }
 
-    async fn load(&mut self, _data: &[u8]) -> Result<(), Error> {
+    fn load(&mut self, _data: &[u8]) -> Result<(), Error> {
         Ok(())
     }
 
-    async fn store<'a>(&mut self, _buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
-        Ok(None)
+    fn store(&mut self, _buf: &mut [u8]) -> Result<usize, Error> {
+        Ok(0)
     }
 
-    async fn wait_state_changed(&self) {}
+    fn changed(&mut self) -> Result<bool, Error> {
+        Ok(false)
+    }
+
+    async fn wait_state_changed(&mut self) {}
 }
 
 /// A persistent storage manager for the Matter stack.
@@ -156,12 +161,15 @@ where
     pub async fn reset(&mut self) -> Result<(), Error> {
         // TODO: Reset fabrics
 
-        self.store.remove(Key::Fabrics).await?;
-        self.store.remove(Key::EthNetworks).await?;
-        self.store.remove(Key::WifiNetworks).await?;
-        self.store.remove(Key::ThreadNetworks).await?;
+        let mut buf = self.buf.get().await.unwrap();
+        buf.resize_default(KV_BLOB_BUF_SIZE).unwrap();
 
-        self.networks.reset().await?;
+        self.store.remove(Key::Fabrics, &mut buf).await?;
+        self.store.remove(Key::EthNetworks, &mut buf).await?;
+        self.store.remove(Key::WifiNetworks, &mut buf).await?;
+        self.store.remove(Key::ThreadNetworks, &mut buf).await?;
+
+        self.networks.reset()?;
 
         Ok(())
     }
@@ -171,13 +179,25 @@ where
         let mut buf = self.buf.get().await.unwrap();
         buf.resize_default(KV_BLOB_BUF_SIZE).unwrap();
 
-        if let Some(data) = self.store.load(Key::Fabrics, &mut buf).await? {
-            self.matter.load_fabrics(data)?;
-        }
+        self.store
+            .load(Key::Fabrics, &mut buf, |data| {
+                if let Some(data) = data {
+                    self.matter.load_fabrics(data)?;
+                }
 
-        if let Some(data) = self.store.load(C::KEY, &mut buf).await? {
-            self.networks.load(data).await?;
-        }
+                Ok(())
+            })
+            .await?;
+
+        self.store
+            .load(C::KEY, &mut buf, |data| {
+                if let Some(data) = data {
+                    self.networks.load(data)?;
+                }
+
+                Ok(())
+            })
+            .await?;
 
         Ok(())
     }
@@ -194,14 +214,18 @@ where
             buf.resize_default(KV_BLOB_BUF_SIZE).unwrap();
 
             if self.matter.fabrics_changed() {
-                if let Some(data) = self.matter.store_fabrics(&mut buf)? {
-                    self.store.store(Key::Fabrics, data).await?;
-                }
+                self.store
+                    .store(Key::Fabrics, &mut buf, |buf| {
+                        self.matter
+                            .store_fabrics(buf)
+                            .map(|data| data.map(|data| data.len()).unwrap_or(0))
+                    })
+                    .await?;
             }
 
-            if let Some(data) = self.networks.store(&mut buf).await? {
-                self.store.store(C::KEY, data).await?;
-            }
+            self.store
+                .store(C::KEY, &mut buf, |buf| self.networks.store(buf))
+                .await?;
         }
     }
 }
@@ -253,25 +277,37 @@ impl Display for Key {
 
 /// A trait representing a key-value BLOB storage.
 pub trait KvBlobStore {
-    async fn load<'a>(&mut self, key: Key, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error>;
-    async fn store(&mut self, key: Key, value: &[u8]) -> Result<(), Error>;
-    async fn remove(&mut self, key: Key) -> Result<(), Error>;
+    async fn load<F>(&mut self, key: Key, buf: &mut [u8], cb: F) -> Result<(), Error>
+    where
+        F: FnOnce(Option<&[u8]>) -> Result<(), Error>;
+
+    async fn store<F>(&mut self, key: Key, buf: &mut [u8], cb: F) -> Result<(), Error>
+    where
+        F: FnOnce(&mut [u8]) -> Result<usize, Error>;
+
+    async fn remove(&mut self, key: Key, buf: &mut [u8]) -> Result<(), Error>;
 }
 
 impl<T> KvBlobStore for &mut T
 where
     T: KvBlobStore,
 {
-    async fn load<'a>(&mut self, key: Key, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
-        T::load(self, key, buf).await
+    async fn load<F>(&mut self, key: Key, buf: &mut [u8], cb: F) -> Result<(), Error>
+    where
+        F: FnOnce(Option<&[u8]>) -> Result<(), Error>,
+    {
+        T::load(self, key, buf, cb).await
     }
 
-    async fn store(&mut self, key: Key, value: &[u8]) -> Result<(), Error> {
-        T::store(self, key, value).await
+    async fn store<F>(&mut self, key: Key, buf: &mut [u8], cb: F) -> Result<(), Error>
+    where
+        F: FnOnce(&mut [u8]) -> Result<usize, Error>,
+    {
+        T::store(self, key, buf, cb).await
     }
 
-    async fn remove(&mut self, key: Key) -> Result<(), Error> {
-        T::remove(self, key).await
+    async fn remove(&mut self, key: Key, buf: &mut [u8]) -> Result<(), Error> {
+        T::remove(self, key, buf).await
     }
 }
 
@@ -317,7 +353,10 @@ mod file {
         }
 
         /// Load a BLOB with the specified key from the directory.
-        pub fn load<'b>(&self, key: Key, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
+        pub fn load<F>(&self, key: Key, buf: &mut [u8], cb: F) -> Result<(), Error>
+        where
+            F: FnOnce(Option<&[u8]>) -> Result<(), Error>,
+        {
             use log::info;
             use std::io::Read;
 
@@ -345,14 +384,17 @@ mod file {
 
                     info!("Key {}: loaded {} bytes {:?}", key, data.len(), data);
 
-                    Ok(Some(data))
+                    cb(Some(data))
                 }
-                Err(_) => Ok(None),
+                Err(_) => cb(None),
             }
         }
 
         /// Store a BLOB with the specified key in the directory.
-        fn store(&self, key: Key, data: &[u8]) -> Result<(), Error> {
+        fn store<F>(&self, key: Key, buf: &mut [u8], cb: F) -> Result<(), Error>
+        where
+            F: FnOnce(&mut [u8]) -> Result<usize, Error>,
+        {
             use log::info;
             use std::io::Write;
 
@@ -361,6 +403,10 @@ mod file {
             let path = self.key_path(key);
 
             let mut file = std::fs::File::create(path)?;
+
+            let len = cb(buf)?;
+
+            let data = &buf[..len];
 
             file.write_all(data)?;
 
@@ -371,7 +417,7 @@ mod file {
 
         /// Remove a BLOB with the specified key from the directory.
         /// If the BLOB does not exist, this method does nothing.
-        fn remove(&self, key: Key) -> Result<(), Error> {
+        fn remove(&self, key: Key, _buf: &mut [u8]) -> Result<(), Error> {
             use log::info;
 
             let path = self.key_path(key);
@@ -395,20 +441,22 @@ mod file {
     }
 
     impl KvBlobStore for DirKvBlobStore {
-        async fn load<'a>(
-            &mut self,
-            key: Key,
-            buf: &'a mut [u8],
-        ) -> Result<Option<&'a [u8]>, Error> {
-            DirKvBlobStore::load(self, key, buf)
+        async fn load<F>(&mut self, key: Key, buf: &mut [u8], cb: F) -> Result<(), Error>
+        where
+            F: FnOnce(Option<&[u8]>) -> Result<(), Error>,
+        {
+            DirKvBlobStore::load(self, key, buf, cb)
         }
 
-        async fn store(&mut self, key: Key, value: &[u8]) -> Result<(), Error> {
-            DirKvBlobStore::store(self, key, value)
+        async fn store<F>(&mut self, key: Key, buf: &mut [u8], cb: F) -> Result<(), Error>
+        where
+            F: FnOnce(&mut [u8]) -> Result<usize, Error>,
+        {
+            DirKvBlobStore::store(self, key, buf, cb)
         }
 
-        async fn remove(&mut self, key: Key) -> Result<(), Error> {
-            DirKvBlobStore::remove(self, key)
+        async fn remove(&mut self, key: Key, buf: &mut [u8]) -> Result<(), Error> {
+            DirKvBlobStore::remove(self, key, buf)
         }
     }
 }

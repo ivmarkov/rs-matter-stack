@@ -140,23 +140,17 @@ where
         Ok(())
     }
 
-    fn store<'m>(&mut self, buf: &'m mut [u8]) -> Result<Option<&'m [u8]>, Error>
+    fn store(&mut self, buf: &mut [u8]) -> Result<usize, Error>
     where
         T: ToTLV,
     {
-        if !self.changed {
-            return Ok(None);
-        }
-
         let mut wb = WriteBuf::new(buf);
 
         self.networks.to_tlv(&TLVTag::Anonymous, &mut wb)?;
 
         self.changed = false;
 
-        let len = wb.get_tail();
-
-        Ok(Some(&buf[..len]))
+        Ok(wb.get_tail())
     }
 }
 
@@ -214,7 +208,7 @@ where
     }
 
     /// Store the state into a byte slice.
-    pub fn store<'m>(&self, buf: &'m mut [u8]) -> Result<Option<&'m [u8]>, Error>
+    pub fn store(&self, buf: &mut [u8]) -> Result<usize, Error>
     where
         T::NetworkCredentials: ToTLV,
     {
@@ -222,7 +216,7 @@ where
     }
 
     /// Return `true` if the state has changed.
-    pub fn is_changed(&self) -> bool {
+    pub fn changed(&self) -> bool {
         self.state.lock(|state| state.borrow().changed)
     }
 
@@ -296,21 +290,25 @@ where
         Key::ThreadNetworks
     };
 
-    async fn reset(&mut self) -> Result<(), Error> {
+    fn reset(&mut self) -> Result<(), Error> {
         NetworkContext::reset(self);
 
         Ok(())
     }
 
-    async fn load(&mut self, data: &[u8]) -> Result<(), Error> {
+    fn load(&mut self, data: &[u8]) -> Result<(), Error> {
         NetworkContext::load(self, data)
     }
 
-    async fn store<'a>(&mut self, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
+    fn store(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         NetworkContext::store(self, buf)
     }
 
-    async fn wait_state_changed(&self) {
+    fn changed(&mut self) -> Result<bool, Error> {
+        Ok(NetworkContext::changed(self))
+    }
+
+    async fn wait_state_changed(&mut self) {
         NetworkContext::wait_state_changed(self).await;
     }
 }
