@@ -110,15 +110,15 @@ where
     /// - `persist` - a user-provided `Persist` implementation
     /// - `handler` - a user-provided DM handler implementation
     /// - `user` - a user-provided future that will be polled only when the netif interface is up
-    pub async fn run<'d, I, P, H, U>(
+    pub async fn run<'d, N, P, H, U>(
         &self,
-        netif: I,
+        netif: N,
         persist: P,
         handler: H,
         user: U,
     ) -> Result<(), Error>
     where
-        I: Netif + UdpBind,
+        N: Netif + UdpBind,
         P: Persist,
         H: AsyncHandler + AsyncMetadata,
         U: Future<Output = Result<(), Error>>,
