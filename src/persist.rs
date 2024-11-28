@@ -230,7 +230,7 @@ where
     }
 }
 
-impl<'a, T, C> Persist for KvPersist<'a, T, C>
+impl<T, C> Persist for KvPersist<'_, T, C>
 where
     T: KvBlobStore,
     C: NetworkPersist,

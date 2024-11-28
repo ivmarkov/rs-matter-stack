@@ -183,7 +183,7 @@ pub type WifiNCMatterStack<'a, M, E> = MatterStack<'a, WirelessBle<M, Wifi<NC>, 
 /// Note that Alexa does not (yet) work with non-concurrent commissioning.
 pub type ThreadNCMatterStack<'a, M, E> = MatterStack<'a, WirelessBle<M, Thread<NC>, E>>;
 
-impl<'a, M, T, E> MatterStack<'a, WirelessBle<M, T, E>>
+impl<M, T, E> MatterStack<'_, WirelessBle<M, T, E>>
 where
     M: RawMutex + Send + Sync + 'static,
     T: ConcurrentWirelessConfig,
@@ -199,7 +199,7 @@ where
     /// - `persist` - a user-provided `Persist` implementation
     /// - `handler` - a user-provided DM handler implementation
     /// - `user` - a user-provided future that will be polled only when the netif interface is up
-    pub async fn run_with_controller<'d, C, N, B, P, H, U>(
+    pub async fn run_with_controller<C, N, B, P, H, U>(
         &'static self,
         controller: C,
         netif: N,
@@ -234,7 +234,7 @@ where
     }
 }
 
-impl<'a, M, T, E> MatterStack<'a, WirelessBle<M, T, E>>
+impl<M, T, E> MatterStack<'_, WirelessBle<M, T, E>>
 where
     M: RawMutex + Send + Sync + 'static,
     T: WirelessConfig,
@@ -260,7 +260,7 @@ where
     /// - `persist` - a user-provided `Persist` implementation
     /// - `handler` - a user-provided DM handler implementation
     /// - `user` - a user-provided future that will be polled only when the netif interface is up
-    pub async fn run<'d, W, B, P, H, U>(
+    pub async fn run<W, B, P, H, U>(
         &'static self,
         wireless: W,
         ble: B,
@@ -292,7 +292,7 @@ where
             .await
     }
 
-    async fn run_net<'d, W, B>(&'static self, mut wireless: W, mut ble: B) -> Result<(), Error>
+    async fn run_net<W, B>(&'static self, mut wireless: W, mut ble: B) -> Result<(), Error>
     where
         W: Wireless<Data = T::Data>,
         B: Ble,
@@ -359,7 +359,7 @@ where
         }
     }
 
-    async fn run_net_with_controller<'d, C, N, B>(
+    async fn run_net_with_controller<C, N, B>(
         &'static self,
         mut controller: C,
         netif: N,
@@ -419,7 +419,7 @@ where
         }
     }
 
-    async fn run_comm_net<'d, N, B>(
+    async fn run_comm_net<N, B>(
         &self,
         mut netif: N,
         btp: &Btp<&'static BtpContext<M>, M, B>,
@@ -443,7 +443,7 @@ where
         select(&mut btp_task, &mut net_task).coalesce().await
     }
 
-    async fn run_nc_comm_net<'d, B>(
+    async fn run_nc_comm_net<B>(
         &'static self,
         btp: &Btp<&'static BtpContext<M>, M, B>,
     ) -> Result<(), Error>
@@ -609,7 +609,7 @@ mod bluez {
         }
     }
 
-    impl<'a> Ble for BuiltinBle<'a> {
+    impl Ble for BuiltinBle<'_> {
         type Peripheral<'t>
             = BuiltinGattPeripheral
         where

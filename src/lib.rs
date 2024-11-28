@@ -319,7 +319,7 @@ where
     /// - `comm` - a tuple of additional and optional `NetworkReceive` and `NetworkSend` transport implementations
     ///   (useful when a second transport needs to run in parallel with the operational Matter transport,
     ///   i.e. when using concurrent commissisoning)
-    async fn run_oper_net<'d, I, U, R, S>(
+    async fn run_oper_net<I, U, R, S>(
         &self,
         netif: I,
         until: U,
@@ -444,7 +444,7 @@ where
     /// user-provided transport might not be IP-based (i.e. BLE).
     ///
     /// It also has no facilities for monitoring the transport network state.
-    async fn run_handlers<'d, P, H>(&self, persist: P, handler: H) -> Result<(), Error>
+    async fn run_handlers<P, H>(&self, persist: P, handler: H) -> Result<(), Error>
     where
         H: AsyncHandler + AsyncMetadata,
         P: Persist,

@@ -535,7 +535,7 @@ where
     }
 }
 
-impl<'a, const N: usize, M, T> AsyncHandler for WirelessNwCommCluster<'a, N, M, T>
+impl<const N: usize, M, T> AsyncHandler for WirelessNwCommCluster<'_, N, M, T>
 where
     M: RawMutex,
     T: Controller,

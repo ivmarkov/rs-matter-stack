@@ -68,7 +68,7 @@ where
 pub type EthMatterStack<'a, E> = MatterStack<'a, Eth<E>>;
 
 /// A specialization of the `MatterStack` for Ethernet.
-impl<'a, E> MatterStack<'a, Eth<E>>
+impl<E> MatterStack<'_, Eth<E>>
 where
     E: Embedding + 'static,
 {
@@ -110,7 +110,7 @@ where
     /// - `persist` - a user-provided `Persist` implementation
     /// - `handler` - a user-provided DM handler implementation
     /// - `user` - a user-provided future that will be polled only when the netif interface is up
-    pub async fn run<'d, N, P, H, U>(
+    pub async fn run<N, P, H, U>(
         &self,
         netif: N,
         persist: P,
