@@ -22,10 +22,10 @@ use embassy_sync::signal::Signal;
 use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::mdns::{Mdns, ServiceMode};
-use rs_matter::utils::blmutex::Mutex;
-use rs_matter::utils::buf::BufferAccess;
+use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::{init, Init};
-use rs_matter::utils::refcell::RefCell;
+use rs_matter::utils::storage::pooled::BufferAccess;
+use rs_matter::utils::sync::blocking::Mutex;
 
 const MAX_MATTER_SERVICES: usize = 4;
 const MAX_MATTER_SERVICE_NAME_LEN: usize = 40;
@@ -71,7 +71,7 @@ where
     services: Mutex<
         M,
         RefCell<
-            rs_matter::utils::vec::Vec<
+            rs_matter::utils::storage::Vec<
                 (heapless::String<MAX_MATTER_SERVICE_NAME_LEN>, ServiceMode),
                 MAX_MATTER_SERVICES,
             >,
@@ -90,7 +90,7 @@ where
         Self {
             dev_det,
             matter_port,
-            services: Mutex::new(RefCell::new(rs_matter::utils::vec::Vec::new())),
+            services: Mutex::new(RefCell::new(rs_matter::utils::storage::Vec::new())),
             broadcast_signal: Signal::new(),
         }
     }
@@ -100,7 +100,7 @@ where
         init!(Self {
             dev_det,
             matter_port,
-            services <- Mutex::init(RefCell::init(rs_matter::utils::vec::Vec::init())),
+            services <- Mutex::init(RefCell::init(rs_matter::utils::storage::Vec::init())),
             broadcast_signal: Signal::new(),
         })
     }
@@ -179,7 +179,7 @@ where
     }
 }
 
-impl<'a, M> Mdns for MatterServices<'a, M>
+impl<M> Mdns for MatterServices<'_, M>
 where
     M: RawMutex,
 {

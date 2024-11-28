@@ -13,13 +13,13 @@ readme = "README.md"
 rust-version = "1.77"
 
 [patch.crates-io]
-rs-matter = { git = "https://github.com/ivmarkov/rs-matter" }
-#rs-matter = { path = "../rs-matter/rs-matter" }
+rs-matter = { git = "https://github.com/project-chip/rs-matter" }
 #edge-nal = { git = "https://github.com/ivmarkov/edge-net" }
-#edge-nal = { path = "../edge-net/edge-nal" }
 #edge-nal-std = { git = "https://github.com/ivmarkov/edge-net" }
-#edge-nal-std = { path = "../edge-net/edge-nal-std" }
 #edge-mdns = { git = "https://github.com/ivmarkov/edge-net" }
+#rs-matter = { path = "../rs-matter/rs-matter" }
+#edge-nal = { path = "../edge-net/edge-nal" }
+#edge-nal-std = { path = "../edge-net/edge-nal-std" }
 #edge-mdns = { path = "../edge-net/edge-mdns" }
 
 [features]
