@@ -105,6 +105,7 @@ where
 
 /// As the name suggests, this is a dummy implementation of the `Persist` trait
 /// that does not persist anything.
+#[derive(Debug)]
 pub struct DummyPersist;
 
 impl Persist for DummyPersist {
@@ -361,8 +362,8 @@ mod file {
     /// A helper for logging the key together with its (optional) namespace
     struct ForDisplay<'a, N, K>(&'a Option<N>, &'a K);
 
-    impl<N, K> Display for ForDisplay<'_, N, K> 
-    where 
+    impl<N, K> Display for ForDisplay<'_, N, K>
+    where
         N: AsRef<str>,
         K: AsRef<str>,
     {
@@ -376,12 +377,13 @@ mod file {
     }
 
     /// An implementation of the `KvBlobStore` trait that stores the BLOBs in a directory.
-    /// 
-    /// The BLOBs are stored in files named after the keys (and their namespaces, if any) 
+    ///
+    /// The BLOBs are stored in files named after the keys (and their namespaces, if any)
     /// in the specified directory.
     ///
     /// The implementation has its own public API, so that the user is able to load and store
     /// additional BLOBs, unrelated to the Matter-specific `KvBlobStore`.
+    #[derive(Debug, Clone)]
     pub struct DirKvBlobStore(std::path::PathBuf);
 
     impl DirKvBlobStore {
@@ -397,7 +399,12 @@ mod file {
         }
 
         /// Load a BLOB with the specified key from the directory.
-        pub fn load<'a, N, K>(&self, namespace: Option<N>, key: K, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error>
+        pub fn load<'a, N, K>(
+            &self,
+            namespace: Option<N>,
+            key: K,
+            buf: &'a mut [u8],
+        ) -> Result<Option<&'a [u8]>, Error>
         where
             N: AsRef<str>,
             K: AsRef<str>,
@@ -424,7 +431,12 @@ mod file {
 
                     let data = &buf[..offset];
 
-                    debug!("Key {}: loaded {} bytes {:?}", ForDisplay(&namespace, &key), data.len(), data);
+                    debug!(
+                        "Key {}: loaded {} bytes {:?}",
+                        ForDisplay(&namespace, &key),
+                        data.len(),
+                        data
+                    );
 
                     Ok(Some(data))
                 }
@@ -446,14 +458,19 @@ mod file {
 
             file.write_all(data)?;
 
-            debug!("Key {}: stored {} bytes {:?}", ForDisplay(&namespace, &key), data.len(), data);
+            debug!(
+                "Key {}: stored {} bytes {:?}",
+                ForDisplay(&namespace, &key),
+                data.len(),
+                data
+            );
 
             Ok(())
         }
 
         /// Remove a BLOB with the specified key from the directory.
         /// If the BLOB does not exist, this method does nothing.
-        pub fn remove<N, K>(&self, namespace: Option<N>, key: K) -> Result<(), Error> 
+        pub fn remove<N, K>(&self, namespace: Option<N>, key: K) -> Result<(), Error>
         where
             N: AsRef<str>,
             K: AsRef<str>,
@@ -467,8 +484,8 @@ mod file {
             Ok(())
         }
 
-        fn key_path<N, K>(&self, namespace: &Option<N>, key: &K) -> std::path::PathBuf 
-        where   
+        fn key_path<N, K>(&self, namespace: &Option<N>, key: &K) -> std::path::PathBuf
+        where
             N: AsRef<str>,
             K: AsRef<str>,
         {
