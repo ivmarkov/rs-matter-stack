@@ -210,5 +210,5 @@ const NODE: Node = Node {
 To build all examples, use:
 
 ```
-cargo build --examples --features os,nix
+cargo build --examples --features examples
 ```

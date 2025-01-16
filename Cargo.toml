@@ -22,10 +22,11 @@ rs-matter = { git = "https://github.com/project-chip/rs-matter" }
 [features]
 default = []
 zeroconf = ["os", "rs-matter/zeroconf"]
-os = ["backtrace", "rs-matter/os", "rs-matter/rustcrypto", "embassy-time/std", "embassy-time/generic-queue"]
+os = ["backtrace", "rs-matter/os", "rs-matter/rustcrypto", "embassy-time/std"]
 backtrace = ["std", "rs-matter/backtrace"]
 std = ["alloc", "rs-matter/std", "edge-nal-std"]
 alloc = ["embedded-svc/alloc"]
+examples = ["os", "nix", "embassy-time-queue-utils/generic-queue-64"]
 
 [dependencies]
 log = { version = "0.4", default-features = false }
@@ -35,12 +36,12 @@ bitflags = { version =  "2.5", default-features = false }
 scopeguard = { version = "1", default-features = false }
 embassy-futures = "0.1"
 embassy-sync = "0.6"
-embassy-time = "0.3"
+embassy-time = "0.4"
 embedded-svc = { version = "0.28", default-features = false }
 rs-matter = { version = "0.1", default-features = false }
-edge-nal = "0.4"
-edge-nal-std = { version = "0.4", optional = true }
-edge-mdns = { version = "0.4", optional = true }
+edge-nal = "0.5"
+edge-nal-std = { version = "0.5", optional = true }
+edge-mdns = { version = "0.5", optional = true }
 
 [target.'cfg(all(unix, not(target_os = "espidf")))'.dependencies]
 bitflags = "2"
@@ -51,13 +52,14 @@ static_cell = "2.1"
 futures-lite = "1"
 async-compat = "0.2"
 env_logger = "0.11"
+embassy-time-queue-utils = { version = "0.1", features = ["generic-queue-64"] }
 
 [[example]]
 name = "light_eth"
 path = "examples/light_eth.rs"
-required-features = ["os", "nix"]
+required-features = ["examples"]
 
 [[example]]
 name = "light"
 path = "examples/light.rs"
-required-features = ["os", "nix"]
+required-features = ["examples"]
