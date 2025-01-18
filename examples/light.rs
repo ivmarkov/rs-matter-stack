@@ -14,16 +14,15 @@ use embassy_time::{Duration, Timer};
 
 use log::info;
 
-use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
-use rs_matter::data_model::cluster_on_off;
-use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter::data_model::objects::{Dataver, Endpoint, HandlerCompat, Node};
-use rs_matter::data_model::system_model::descriptor;
-use rs_matter::error::Error;
-use rs_matter::utils::init::InitMaybeUninit;
-use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::sync::blocking::raw::StdRawMutex;
-
+use rs_matter_stack::matter::data_model::cluster_basic_information::BasicInfoConfig;
+use rs_matter_stack::matter::data_model::cluster_on_off;
+use rs_matter_stack::matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
+use rs_matter_stack::matter::data_model::objects::{Dataver, Endpoint, HandlerCompat, Node};
+use rs_matter_stack::matter::data_model::system_model::descriptor;
+use rs_matter_stack::matter::error::Error;
+use rs_matter_stack::matter::utils::init::InitMaybeUninit;
+use rs_matter_stack::matter::utils::select::Coalesce;
+use rs_matter_stack::matter::utils::sync::blocking::raw::StdRawMutex;
 use rs_matter_stack::netif::UnixNetif;
 use rs_matter_stack::persist::{new_kv, DirKvBlobStore, KvBlobBuf};
 use rs_matter_stack::test_device::{TEST_BASIC_COMM_DATA, TEST_DEV_ATT, TEST_PID, TEST_VID};
