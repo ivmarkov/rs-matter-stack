@@ -13,7 +13,7 @@ use rs_matter::tlv::{FromTLV, OctetsOwned, ToTLV};
 use rs_matter::transport::network::btp::GattPeripheral;
 use rs_matter::utils::storage::Vec;
 
-use crate::netif::{Netif, NetifRun};
+use crate::netif::Netif;
 use crate::private::Sealed;
 
 /// A trait representing the credentials of a wireless network (Wifi or Thread).
@@ -357,7 +357,7 @@ pub trait WirelessData: Sealed + Debug + 'static {
     type ScanResult: Debug + Clone;
 
     /// The type of the statistics (they are different for Wifi vs Thread)
-    type Stats: Debug;
+    type Stats: Debug + Default;
 
     // Whether this wireless data is for Wifi networks (`true`) or Thread networks (`false`)
     const WIFI: bool;
@@ -468,23 +468,45 @@ impl ConcurrencyMode for NC {
     const CONCURRENT: bool = false;
 }
 
-/// A factory trait for constructing the wireless controller and its network interface
-pub trait Wireless {
+/// A trait representing a task that needs access to the wireless interface
+/// (Netif, UDP stack and Wireless controller) to perform its work.
+pub trait WirelessTask {
     type Data: WirelessData;
 
-    /// The type of the network interface
-    type Netif<'a>: Netif + NetifRun + UdpBind
+    /// Run the task with the given network interface, UDP stack and wireless controller
+    async fn run<N, U, C>(&mut self, netif: N, udp: U, controller: C) -> Result<(), Error>
     where
-        Self: 'a;
+        N: Netif,
+        U: UdpBind,
+        C: Controller<Data = Self::Data>;
+}
 
-    /// The type of the controller
-    type Controller<'a>: Controller<Data = Self::Data>
+impl<T> WirelessTask for &mut T
+where
+    T: WirelessTask,
+{
+    type Data = T::Data;
+
+    async fn run<N, U, C>(&mut self, netif: N, udp: U, controller: C) -> Result<(), Error>
     where
-        Self: 'a;
+        N: Netif,
+        U: UdpBind,
+        C: Controller<Data = Self::Data>,
+    {
+        T::run(*self, netif, udp, controller).await
+    }
+}
 
-    /// Setup the radio to operate in wireless (Wifi or Thread) mode and return the wireless controller
-    /// and the network interface.
-    async fn start(&mut self) -> Result<(Self::Netif<'_>, Self::Controller<'_>), Error>;
+/// A trait for running a task within a context where the wireless interface is initialized and operable
+pub trait Wireless {
+    /// The type of the wireless data (WifiData or ThreadData)
+    type Data: WirelessData;
+
+    /// Setup the radio to operate in wireless (Wifi or Thread) mode
+    /// and run the given task
+    async fn run<T>(&mut self, task: T) -> Result<(), Error>
+    where
+        T: WirelessTask<Data = Self::Data>;
 }
 
 impl<T> Wireless for &mut T
@@ -492,41 +514,114 @@ where
     T: Wireless,
 {
     type Data = T::Data;
-    type Netif<'a>
-        = T::Netif<'a>
-    where
-        Self: 'a;
-    type Controller<'a>
-        = T::Controller<'a>
-    where
-        Self: 'a;
 
-    async fn start(&mut self) -> Result<(Self::Netif<'_>, Self::Controller<'_>), Error> {
-        T::start(self).await
+    async fn run<A>(&mut self, task: A) -> Result<(), Error>
+    where
+        A: WirelessTask<Data = Self::Data>,
+    {
+        T::run(self, task).await
     }
 }
 
-/// A factory trait for constructing the BTP Gatt peripheral for the device
-pub trait Ble {
-    type Peripheral<'a>: GattPeripheral
-    where
-        Self: 'a;
+/// A utility type for running a wireless task with a pre-existing wireless interface
+/// rather than bringing up / tearing down the wireless interface for the task.
+pub struct PreexistingWireless<N, U, C> {
+    netif: N,
+    udp: U,
+    controller: C,
+}
 
-    /// Setup the radio to operate in BLE mode and return a GATT peripheral configured as per the
-    /// requirements of the `rs-matter` BTP implementation. Necessary during commissioning.
-    async fn start(&mut self) -> Result<Self::Peripheral<'_>, Error>;
+impl<N, U, C> PreexistingWireless<N, U, C> {
+    /// Create a new `PreexistingWireless` instance with the given network interface, UDP stack
+    /// and wireless controller
+    pub const fn new(netif: N, udp: U, controller: C) -> Self {
+        Self {
+            netif,
+            udp,
+            controller,
+        }
+    }
+}
+
+impl<N, U, C> Wireless for PreexistingWireless<N, U, C>
+where
+    N: Netif,
+    U: UdpBind,
+    C: Controller,
+{
+    type Data = C::Data;
+
+    async fn run<T>(&mut self, mut task: T) -> Result<(), Error>
+    where
+        T: WirelessTask<Data = Self::Data>,
+    {
+        task.run(&mut self.netif, &mut self.udp, &mut self.controller)
+            .await
+    }
+}
+
+/// A trait representing a task that needs access to the BLE peripheral to perform its work
+pub trait BleTask {
+    /// Run the task with the given GATT peripheral
+    async fn run<P>(&mut self, peripheral: P) -> Result<(), Error>
+    where
+        P: GattPeripheral;
+}
+
+impl<T> BleTask for &mut T
+where
+    T: BleTask,
+{
+    async fn run<P>(&mut self, peripheral: P) -> Result<(), Error>
+    where
+        P: GattPeripheral,
+    {
+        T::run(*self, peripheral).await
+    }
+}
+
+/// A trait for running a task within a context where the BLE peripheral is initialized and operable
+/// (e.g. in a commissioning workflow)
+pub trait Ble {
+    /// Setup the radio to operate in BLE mode and run the given task
+    async fn run<T>(&mut self, task: T) -> Result<(), Error>
+    where
+        T: BleTask;
 }
 
 impl<T> Ble for &mut T
 where
     T: Ble,
 {
-    type Peripheral<'a>
-        = T::Peripheral<'a>
+    async fn run<A>(&mut self, task: A) -> Result<(), Error>
     where
-        Self: 'a;
+        A: BleTask,
+    {
+        T::run(self, task).await
+    }
+}
 
-    async fn start(&mut self) -> Result<Self::Peripheral<'_>, Error> {
-        T::start(*self).await
+/// A utility type for running a BLE task with a pre-existing BLE peripheral
+/// rather than bringing up / tearing down the BLE peripheral for the task.
+pub struct PreexistingBle<P> {
+    peripheral: P,
+}
+
+impl<P> PreexistingBle<P> {
+    /// Create a new `PreexistingBle` instance with the given GATT peripheral
+    pub const fn new(peripheral: P) -> Self {
+        Self { peripheral }
+    }
+}
+
+impl<P> Ble for PreexistingBle<P>
+where
+    P: GattPeripheral,
+{
+    async fn run<T>(&mut self, mut task: T) -> Result<(), Error>
+    where
+        T: BleTask,
+    {
+        task.run(&mut self.peripheral).await
     }
 }

@@ -319,15 +319,17 @@ where
     /// - `comm` - a tuple of additional and optional `NetworkReceive` and `NetworkSend` transport implementations
     ///   (useful when a second transport needs to run in parallel with the operational Matter transport,
     ///   i.e. when using concurrent commissisoning)
-    async fn run_oper_net<I, U, R, S>(
+    async fn run_oper_net<I, U, X, R, S>(
         &self,
         netif: I,
-        until: U,
+        udp: U,
+        until: X,
         mut comm: Option<(R, S)>,
     ) -> Result<(), Error>
     where
-        I: Netif + UdpBind,
-        U: Future<Output = Result<(), Error>>,
+        I: Netif,
+        U: UdpBind,
+        X: Future<Output = Result<(), Error>>,
         R: NetworkReceive,
         S: NetworkSend,
     {
@@ -357,7 +359,7 @@ where
             let result = if let Some(netif_conf) = netif_conf.as_ref() {
                 info!("Netif up: {}", netif_conf);
 
-                let mut socket = netif
+                let mut socket = udp
                     .bind(SocketAddr::V6(SocketAddrV6::new(
                         Ipv6Addr::UNSPECIFIED,
                         MATTER_PORT,
@@ -369,7 +371,7 @@ where
 
                 let (recv, send) = socket.split();
 
-                let mut mdns_task = pin!(self.run_builtin_mdns(&netif, netif_conf));
+                let mut mdns_task = pin!(self.run_builtin_mdns(&udp, netif_conf));
 
                 if let Some((comm_recv, comm_send)) = comm.as_mut() {
                     info!("Running operational and extra networks");
@@ -492,9 +494,9 @@ where
         Ok(())
     }
 
-    async fn run_builtin_mdns<I>(&self, _netif: &I, _netif_conf: &NetifConf) -> Result<(), Error>
+    async fn run_builtin_mdns<U>(&self, _udp: U, _netif_conf: &NetifConf) -> Result<(), Error>
     where
-        I: UdpBind,
+        U: UdpBind,
     {
         if matches!(self.mdns, MdnsType::Builtin) {
             #[cfg(not(all(
@@ -510,7 +512,7 @@ where
                     Host, MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_PORT,
                 };
 
-                let mut socket = _netif
+                let mut socket = _udp
                     .bind(SocketAddr::V6(SocketAddrV6::new(
                         Ipv6Addr::UNSPECIFIED,
                         MDNS_PORT,
