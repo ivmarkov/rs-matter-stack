@@ -27,7 +27,8 @@ use rs_matter::BasicCommData;
 
 use rs_matter_stack::netif::UnixNetif;
 use rs_matter_stack::persist::{new_kv, DirKvBlobStore, KvBlobBuf};
-use rs_matter_stack::wireless::{BuiltinBle, DummyWireless};
+use rs_matter_stack::wireless::traits::{DisconnectedController, PreexistingWireless};
+use rs_matter_stack::wireless::BuiltinBle;
 use rs_matter_stack::WifiNCMatterStack;
 
 use static_cell::StaticCell;
@@ -94,7 +95,11 @@ fn main() -> Result<(), Error> {
     // not being very intelligent w.r.t. stack usage in async functions
     let mut matter = pin!(stack.run(
         // A dummy wireless modem which does nothing
-        DummyWireless::new(UnixNetif::new_default()),
+        PreexistingWireless::new(
+            UnixNetif::new_default(),
+            edge_nal_std::Stack::new(),
+            DisconnectedController::new()
+        ),
         // A Linux-specific modem using BlueZ
         BuiltinBle::new(None),
         // Will persist in `<tmp-dir>/rs-matter`

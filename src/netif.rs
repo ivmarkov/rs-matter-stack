@@ -143,7 +143,7 @@ mod unix {
 
     use rs_matter::error::Error;
 
-    use super::{Netif, NetifConf, NetifRun};
+    use super::{Netif, NetifConf};
 
     bitflags! {
         /// DefaultNetif is a set of flags that can be used to filter network interfaces
@@ -322,25 +322,6 @@ mod unix {
             Timer::after(Duration::from_secs(2)).await;
 
             Ok(())
-        }
-    }
-
-    impl NetifRun for UnixNetif {
-        async fn run(&self) -> Result<(), Error> {
-            core::future::pending().await
-        }
-    }
-
-    impl edge_nal::UdpBind for UnixNetif {
-        type Error = std::io::Error;
-
-        type Socket<'a>
-            = edge_nal_std::UdpSocket
-        where
-            Self: 'a;
-
-        async fn bind(&self, addr: core::net::SocketAddr) -> Result<Self::Socket<'_>, Self::Error> {
-            edge_nal_std::Stack::new().bind(addr).await
         }
     }
 

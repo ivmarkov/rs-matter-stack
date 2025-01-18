@@ -1,5 +1,4 @@
 use core::future::Future;
-use core::marker::PhantomData;
 use core::pin::pin;
 
 use diag::thread::ThreadNwDiagCluster;
@@ -24,8 +23,8 @@ use rs_matter::transport::network::NoNetwork;
 use rs_matter::utils::init::{init, Init};
 use rs_matter::utils::select::Coalesce;
 use traits::{
-    BleTask, ConcurrencyMode, DisconnectedController, Thread, ThreadData, Wifi, WifiData, Wireless,
-    WirelessConfig, WirelessData, WirelessTask, NC,
+    BleTask, ConcurrencyMode, Thread, ThreadData, Wifi, WifiData, Wireless, WirelessConfig,
+    WirelessData, WirelessTask, NC,
 };
 
 use crate::netif::Netif;
@@ -613,45 +612,12 @@ pub type ThreadRootEndpointHandler<'a, M, T> = RootEndpointHandler<
     ThreadNwDiagCluster<M, T>,
 >;
 
-/// A dummy wireless interface which returns a wireless controller
-/// which is always disconnected, and a network interface which is
-/// pre-existing.
-///
-/// Useful for testing the Matter stack without a real wireless interface.
-pub struct DummyWireless<T, N, U>(PhantomData<T>, N, U);
-
-impl<T, N, U> DummyWireless<T, N, U> {
-    /// Creates a new instance of the `DummyWireless` type
-    /// with the supplied network interface.
-    pub const fn new(netif: N, udp: U) -> Self {
-        Self(PhantomData, netif, udp)
-    }
-}
-
-impl<T, N, U> Wireless for DummyWireless<T, N, U>
-where
-    T: WirelessData,
-    T::Stats: Default,
-    N: Netif,
-    U: UdpBind,
-{
-    type Data = T;
-
-    async fn run<A>(&mut self, mut task: A) -> Result<(), Error>
-    where
-        A: WirelessTask<Data = Self::Data>,
-    {
-        task.run(&self.1, &self.2, DisconnectedController::new())
-            .await
-    }
-}
-
 #[cfg(all(feature = "os", target_os = "linux"))]
 mod bluez {
     use rs_matter::error::Error;
     use rs_matter::transport::network::btp::BuiltinGattPeripheral;
 
-    use crate::wireless::traits::Ble;
+    use crate::wireless::traits::{Ble, BleTask};
 
     /// A `Ble` trait implementation for the BlueZ GATT peripheral
     /// which is built-in in `rs-matter`.
@@ -664,13 +630,13 @@ mod bluez {
     }
 
     impl Ble for BuiltinBle<'_> {
-        type Peripheral<'t>
-            = BuiltinGattPeripheral
+        async fn run<T>(&mut self, mut task: T) -> Result<(), Error>
         where
-            Self: 't;
+            T: BleTask,
+        {
+            let peripheral = BuiltinGattPeripheral::new(self.0);
 
-        async fn start(&mut self) -> Result<Self::Peripheral<'_>, Error> {
-            Ok(BuiltinGattPeripheral::new(self.0))
+            task.run(peripheral).await
         }
     }
 }
