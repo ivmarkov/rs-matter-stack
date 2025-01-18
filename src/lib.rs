@@ -61,6 +61,7 @@ pub mod mdns;
 pub mod netif;
 pub mod network;
 pub mod persist;
+pub mod test_device;
 pub mod udp;
 pub mod utils;
 pub mod wireless;

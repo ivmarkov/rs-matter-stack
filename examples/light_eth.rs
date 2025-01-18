@@ -25,16 +25,13 @@ use rs_matter::data_model::system_model::descriptor;
 use rs_matter::error::Error;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::BasicCommData;
 
 use rs_matter_stack::netif::UnixNetif;
 use rs_matter_stack::persist::{new_kv, DirKvBlobStore, KvBlobBuf};
+use rs_matter_stack::test_device::{TEST_BASIC_COMM_DATA, TEST_DEV_ATT, TEST_PID, TEST_VID};
 use rs_matter_stack::EthMatterStack;
 
 use static_cell::StaticCell;
-
-#[path = "dev_att/dev_att.rs"]
-mod dev_att;
 
 fn main() -> Result<(), Error> {
     env_logger::Builder::from_env(
@@ -51,8 +48,8 @@ fn main() -> Result<(), Error> {
         .uninit()
         .init_with(EthMatterStack::init_default(
             &BasicInfoConfig {
-                vid: 0xFFF1,
-                pid: 0x8001,
+                vid: TEST_VID,
+                pid: TEST_PID,
                 hw_ver: 2,
                 sw_ver: 1,
                 sw_ver_str: "1",
@@ -61,11 +58,8 @@ fn main() -> Result<(), Error> {
                 product_name: "ACME Light",
                 vendor_name: "ACME",
             },
-            BasicCommData {
-                password: 20202021,
-                discriminator: 3840,
-            },
-            &DEV_ATT,
+            TEST_BASIC_COMM_DATA,
+            &TEST_DEV_ATT,
         ));
 
     // Our "light" on-off cluster.
@@ -136,8 +130,6 @@ fn main() -> Result<(), Error> {
 /// The Matter stack is allocated statically to avoid
 /// program stack blowups.
 static MATTER_STACK: StaticCell<EthMatterStack<KvBlobBuf<()>>> = StaticCell::new();
-
-const DEV_ATT: dev_att::HardCodedDevAtt = dev_att::HardCodedDevAtt::new();
 
 /// Endpoint 0 (the root endpoint) always runs
 /// the hidden Matter system clusters, so we pick ID=1
