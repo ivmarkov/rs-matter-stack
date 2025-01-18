@@ -1,7 +1,6 @@
 use core::fmt;
 use core::net::{Ipv4Addr, Ipv6Addr};
 
-use edge_nal::UdpBind;
 use rs_matter::error::Error;
 
 #[cfg(all(unix, feature = "os", feature = "nix", not(target_os = "espidf")))]
@@ -43,36 +42,6 @@ where
 
     async fn wait_conf_change(&self) -> Result<(), Error> {
         (**self).wait_conf_change().await
-    }
-}
-
-/// A trait for running a network interface and possible the L2 layer below it
-///
-/// Used by the Matter stack only when it "owns" the operational network, i.e.
-/// when the operational network is wireless and is instantiated by the stack itself.
-///
-/// Network instantiation by the Matter stack is mandatory for non-concurrent
-/// commissioning and optional for concurrent commissioning.
-pub trait NetifRun {
-    /// Run the network interface
-    async fn run(&self) -> Result<(), Error>;
-}
-
-impl<T> NetifRun for &T
-where
-    T: NetifRun,
-{
-    async fn run(&self) -> Result<(), Error> {
-        T::run(self).await
-    }
-}
-
-impl<T> NetifRun for &mut T
-where
-    T: NetifRun,
-{
-    async fn run(&self) -> Result<(), Error> {
-        T::run(self).await
     }
 }
 
@@ -131,35 +100,26 @@ impl fmt::Display for NetifConf {
 /// (by default `Ipv4Addr::UNSPECIFIED` / `Ipv6Addr::UNSPECIFIED` and 0).
 ///
 /// Useful for demoing purposes
-pub struct DummyNetif<U> {
+pub struct DummyNetif {
     conf: Option<NetifConf>,
-    bind: U,
 }
 
-impl<U> DummyNetif<U> {
+impl DummyNetif {
     /// Create a new `DummyNetif` with the given IP configuration and MAC address
-    pub const fn new(conf: Option<NetifConf>, bind: U) -> Self {
-        Self { conf, bind }
+    pub const fn new(conf: Option<NetifConf>) -> Self {
+        Self { conf }
     }
 }
 
-impl<U> NetifRun for DummyNetif<U> {
-    async fn run(&self) -> Result<(), Error> {
-        core::future::pending().await
-    }
-}
-
-#[cfg(feature = "std")]
-impl Default for DummyNetif<edge_nal_std::Stack> {
+impl Default for DummyNetif {
     fn default() -> Self {
         Self {
             conf: Some(NetifConf::default()),
-            bind: edge_nal_std::Stack::new(),
         }
     }
 }
 
-impl<U> Netif for DummyNetif<U> {
+impl Netif for DummyNetif {
     async fn get_conf(&self) -> Result<Option<NetifConf>, Error> {
         Ok(self.conf.clone())
     }
@@ -167,22 +127,6 @@ impl<U> Netif for DummyNetif<U> {
     async fn wait_conf_change(&self) -> Result<(), Error> {
         // DummyNetif does not track any changes
         core::future::pending().await
-    }
-}
-
-impl<U> edge_nal::UdpBind for DummyNetif<U>
-where
-    U: UdpBind,
-{
-    type Error = U::Error;
-
-    type Socket<'a>
-        = U::Socket<'a>
-    where
-        Self: 'a;
-
-    async fn bind(&self, addr: core::net::SocketAddr) -> Result<Self::Socket<'_>, Self::Error> {
-        self.bind.bind(addr).await
     }
 }
 
@@ -199,7 +143,7 @@ mod unix {
 
     use rs_matter::error::Error;
 
-    use super::{Netif, NetifConf, NetifRun};
+    use super::{Netif, NetifConf};
 
     bitflags! {
         /// DefaultNetif is a set of flags that can be used to filter network interfaces
@@ -378,25 +322,6 @@ mod unix {
             Timer::after(Duration::from_secs(2)).await;
 
             Ok(())
-        }
-    }
-
-    impl NetifRun for UnixNetif {
-        async fn run(&self) -> Result<(), Error> {
-            core::future::pending().await
-        }
-    }
-
-    impl edge_nal::UdpBind for UnixNetif {
-        type Error = std::io::Error;
-
-        type Socket<'a>
-            = edge_nal_std::UdpSocket
-        where
-            Self: 'a;
-
-        async fn bind(&self, addr: core::net::SocketAddr) -> Result<Self::Socket<'_>, Self::Error> {
-            edge_nal_std::Stack::new().bind(addr).await
         }
     }
 

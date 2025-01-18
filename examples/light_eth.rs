@@ -98,6 +98,8 @@ fn main() -> Result<(), Error> {
     let mut matter = pin!(stack.run(
         // Will try to find a default network interface
         UnixNetif::default(),
+        // The Matter stack needs UDP sockets to communicate with other Matter devices
+        edge_nal_std::Stack::new(),
         // Will persist in `<tmp-dir>/rs-matter`
         new_kv(DirKvBlobStore::new_default(), stack),
         // Our `AsyncHandler` + `AsyncMetadata` impl

@@ -107,21 +107,24 @@ where
     ///
     /// Parameters:
     /// - `netif` - a user-provided `Netif` implementation for the Ethernet network
+    /// - `udp` - a user-provided `UdpBind` implementation
     /// - `persist` - a user-provided `Persist` implementation
     /// - `handler` - a user-provided DM handler implementation
     /// - `user` - a user-provided future that will be polled only when the netif interface is up
-    pub async fn run<N, P, H, U>(
+    pub async fn run<N, U, P, H, X>(
         &self,
         netif: N,
+        udp: U,
         persist: P,
         handler: H,
-        user: U,
+        user: X,
     ) -> Result<(), Error>
     where
-        N: Netif + UdpBind,
+        N: Netif,
+        U: UdpBind,
         P: Persist,
         H: AsyncHandler + AsyncMetadata,
-        U: Future<Output = Result<(), Error>>,
+        X: Future<Output = Result<(), Error>>,
     {
         info!("Matter Stack memory: {}B", core::mem::size_of_val(self));
 
@@ -137,6 +140,7 @@ where
 
         let mut net_task = pin!(self.run_oper_net(
             netif,
+            udp,
             core::future::pending(),
             Option::<(NoNetwork, NoNetwork)>::None
         ));
