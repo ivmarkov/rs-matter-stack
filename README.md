@@ -33,7 +33,7 @@ You need to provide platform-specific implementations of the following traits fo
 - `Ble` - BLE abstraction of the device radio. Not necessary for Ethernet connectivity
   - For Linux, `rs-matter-stack` provides `BuiltinBle`, which uses the Linux BlueZ BT stack.
 - `Wireless` - Wireless (Wifi or Thread) abstraction of the device radio. Not necessary for Ethernet connectivity.
-  - `DummyWireless` is a no-op wireless implementation that is useful for testing. I.e. on Linux, one can use `DummyWireless` together with `BuiltinBle` and `UnixNetif` to test the stack in wireless mode. For production embedded Linux use-cases, you'll have to provide a true `Wireless` implementation, possibly based on WPA Supplicant, or NetworkManager (not available out of the box in `rs-matter-stack` yet).
+  - `DisconnectedController` is a no-op wireless implementation of a Wifi controller that is useful for testing. I.e. on Linux, one can use `PreexistingWireless` + `DisconnectedController` together with `BuiltinBle` and `UnixNetif` to test the stack in wireless mode. For production embedded Linux use-cases, you'll have to provide a true `Controller` implementation, possibly based on WPA Supplicant, or NetworkManager (not available out of the box in `rs-matter-stack` yet).
 
 ## Embassy
 
