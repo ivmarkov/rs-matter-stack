@@ -18,7 +18,7 @@ Instantiate it and then call `MatterStack::<...>::run(...)`.
 
 **Flexibility**.
 
-The Matter stack is assembled as one large future which is not `Send`. Using an executor to poll that future together with others is still possible, but the executor should be a local one (i.e. Tokio's `LocalSet`, `async_executor::LocalExecutor` and so on).
+The Matter stack is assembled as one large future which is not `Send`. Using an executor to poll that future together with others is still possible, but the executor should be a local one (i.e. Embassy's `embassy-executor`, Tokio's `LocalSet`, `async_executor::LocalExecutor` and so on).
 
 ## The examples are STD-only?
 
