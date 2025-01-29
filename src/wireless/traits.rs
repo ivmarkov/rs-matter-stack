@@ -42,28 +42,27 @@ pub trait NetworkCredentials:
 
 /// Concrete Network ID type for Wifi networks
 #[derive(Debug, Clone, PartialEq, FromTLV, ToTLV)]
-pub struct WifiSsid(pub heapless::String<32>);
+pub struct WifiSsid(pub OctetsOwned<32>);
 
 impl TryFrom<&[u8]> for WifiSsid {
     type Error = Error;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        let str = core::str::from_utf8(value).map_err(|_| ErrorCode::InvalidData)?;
-        let ssid = heapless::String::try_from(str).map_err(|_| ErrorCode::NoSpace)?;
+        let ssid = Vec::try_from(value).map_err(|_| ErrorCode::NoSpace)?;
 
-        Ok(Self(ssid))
+        Ok(Self(OctetsOwned { vec: ssid }))
     }
 }
 
 impl AsRef<[u8]> for WifiSsid {
     fn as_ref(&self) -> &[u8] {
-        self.0.as_bytes()
+        self.0.vec.as_slice()
     }
 }
 
 impl Display for WifiSsid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SSID::{}", self.0)
+        write!(f, "SSID::{:?}", core::str::from_utf8(self.0.vec.as_slice()))
     }
 }
 
@@ -353,7 +352,7 @@ pub trait WirelessData: Sealed + Debug + 'static {
     /// The type of the network credentials (e.g. WifiCredentials or ThreadCredentials)
     type NetworkCredentials: NetworkCredentials + Clone;
 
-    /// The type of the scan result (e.g. WiFiInter faceScanResult or ThreadInterfaceScanResult)
+    /// The type of the scan result (e.g. WiFiInterfaceScanResult or ThreadInterfaceScanResult)
     type ScanResult: Debug + Clone;
 
     /// The type of the statistics (they are different for Wifi vs Thread)

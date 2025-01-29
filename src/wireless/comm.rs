@@ -238,6 +238,8 @@ where
 
                     result.to_tlv(&TLVTag::Anonymous, writer.deref_mut())?;
 
+                    info!("Wrote scan result {:?}", result);
+
                     Ok(())
                 },
             )

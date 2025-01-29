@@ -2,7 +2,7 @@
 
 use embedded_svc::wifi::{asynch::Wifi, AuthMethod, ClientConfiguration, Configuration};
 
-use rs_matter::data_model::sdm::nw_commissioning::WiFiSecurity;
+use rs_matter::data_model::sdm::nw_commissioning::{WiFiSecurity, WifiBand};
 use rs_matter::data_model::sdm::wifi_nw_diagnostics::{self, WiFiVersion, WifiNwDiagData};
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::tlv::OctetsOwned;
@@ -56,32 +56,42 @@ where
         let (result, _) = self.0.scan_n::<5>().await.map_err(Self::to_err)?;
 
         for r in &result {
-            if network_id.map(|id| r.ssid == id.0).unwrap_or(true) {
+            if network_id
+                .map(|id| r.ssid.as_bytes() == id.0.vec.as_slice())
+                .unwrap_or(true)
+            {
                 fn to_sec(value: Option<AuthMethod>) -> WiFiSecurity {
                     let Some(value) = value else {
                         // Best guess
-                        return WiFiSecurity::Wpa2Personal;
+                        return WiFiSecurity::WPA2_PERSONAL;
                     };
 
                     match value {
-                        AuthMethod::None => WiFiSecurity::Unencrypted,
-                        AuthMethod::WEP => WiFiSecurity::Wep,
-                        AuthMethod::WPA => WiFiSecurity::WpaPersonal,
-                        AuthMethod::WPA2Personal
-                        | AuthMethod::WPAWPA2Personal
-                        | AuthMethod::WPA2Enterprise => WiFiSecurity::Wpa2Personal,
-                        _ => WiFiSecurity::Wpa3Personal,
+                        AuthMethod::None => WiFiSecurity::UNENCRYPTED,
+                        AuthMethod::WEP => WiFiSecurity::WEP,
+                        AuthMethod::WPA => WiFiSecurity::WPA_PERSONAL,
+                        AuthMethod::WPA2Personal => WiFiSecurity::WPA2_PERSONAL,
+                        AuthMethod::WPAWPA2Personal => {
+                            WiFiSecurity::WPA_PERSONAL | WiFiSecurity::WPA2_PERSONAL
+                        }
+                        AuthMethod::WPA2WPA3Personal => {
+                            WiFiSecurity::WPA2_PERSONAL | WiFiSecurity::WPA3_PERSONAL
+                        }
+                        AuthMethod::WPA2Enterprise => WiFiSecurity::WPA2_PERSONAL,
+                        _ => WiFiSecurity::WPA2_PERSONAL,
                     }
                 }
 
                 callback(Some(&WifiScanResult {
                     security: to_sec(r.auth_method),
-                    ssid: WifiSsid(r.ssid.clone()),
+                    ssid: WifiSsid(OctetsOwned {
+                        vec: r.ssid.as_bytes().try_into().unwrap(),
+                    }),
                     bssid: OctetsOwned {
                         vec: Vec::from_slice(&r.bssid).unwrap(),
                     },
                     channel: r.channel as _,
-                    band: None,
+                    band: Some(WifiBand::B2G4),
                     rssi: Some(r.signal_strength),
                 }))?;
             }
@@ -109,7 +119,10 @@ where
 
             self.0
                 .set_configuration(&Configuration::Client(ClientConfiguration {
-                    ssid: creds.ssid.0.clone(),
+                    ssid: core::str::from_utf8(creds.ssid.0.vec.as_slice())
+                        .unwrap_or("???")
+                        .try_into()
+                        .unwrap(),
                     auth_method,
                     password: creds.password.clone(),
                     ..Default::default()
@@ -136,7 +149,11 @@ where
         let conf = self.0.get_configuration().await.map_err(Self::to_err)?;
 
         Ok(match conf {
-            Configuration::Client(ClientConfiguration { ssid, .. }) => Some(WifiSsid(ssid)),
+            Configuration::Client(ClientConfiguration { ssid, .. }) => {
+                Some(WifiSsid(OctetsOwned {
+                    vec: ssid.as_bytes().try_into().unwrap(),
+                }))
+            }
             _ => None,
         })
     }
