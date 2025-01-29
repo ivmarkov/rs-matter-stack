@@ -2,8 +2,9 @@
 
 use embedded_svc::wifi::{asynch::Wifi, AuthMethod, ClientConfiguration, Configuration};
 
+use log::{error, info, warn};
+
 use rs_matter::data_model::sdm::nw_commissioning::{WiFiSecurity, WifiBand};
-use rs_matter::data_model::sdm::wifi_nw_diagnostics::{self, WiFiVersion, WifiNwDiagData};
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::tlv::OctetsOwned;
 use rs_matter::utils::storage::Vec;
@@ -36,8 +37,9 @@ impl<W> SvcWifiController<W>
 where
     W: Wifi,
 {
-    fn to_err(_err: W::Error) -> Error {
-        Error::new(ErrorCode::NoNetworkInterface) // TODO
+    fn to_err(e: W::Error) -> Error {
+        error!("Wifi error: {:?}", e);
+        Error::new(ErrorCode::NoNetworkInterface)
     }
 }
 
@@ -51,9 +53,37 @@ where
     where
         F: FnMut(Option<&<Self::Data as WirelessData>::ScanResult>) -> Result<(), Error>,
     {
-        let _ = self.0.start().await;
+        info!("Wifi scan request");
 
-        let (result, _) = self.0.scan_n::<5>().await.map_err(Self::to_err)?;
+        if !matches!(
+            self.0.get_configuration().await,
+            Ok(Configuration::Client(_))
+        ) {
+            info!("Reconfiguring wifi to scan");
+
+            let _ = self.0.stop().await;
+
+            // Set a fake STA configuration, so that we can scan
+            self.0
+                .set_configuration(&Configuration::Client(ClientConfiguration {
+                    auth_method: AuthMethod::None,
+                    ..Default::default()
+                }))
+                .await
+                .map_err(Self::to_err)?;
+        }
+
+        if !self.0.is_started().await.map_err(Self::to_err)? {
+            self.0.start().await.map_err(Self::to_err)?;
+            info!("Wifi started");
+        }
+
+        let (result, len) = self.0.scan_n::<5>().await.map_err(Self::to_err)?;
+
+        info!(
+            "Wifi scan complete, reporting {} results out of {len} total",
+            result.len()
+        );
 
         for r in &result {
             if network_id
@@ -82,7 +112,7 @@ where
                     }
                 }
 
-                callback(Some(&WifiScanResult {
+                let result = WifiScanResult {
                     security: to_sec(r.auth_method),
                     ssid: WifiSsid(OctetsOwned {
                         vec: r.ssid.as_bytes().try_into().unwrap(),
@@ -93,18 +123,31 @@ where
                     channel: r.channel as _,
                     band: Some(WifiBand::B2G4),
                     rssi: Some(r.signal_strength),
-                }))?;
+                };
+
+                info!("Scan result {:?}", result);
+
+                callback(Some(&result))?;
             }
         }
 
-        callback(None)
+        callback(None)?;
+
+        info!("Wifi scan complete");
+
+        Ok(())
     }
 
     async fn connect(
         &mut self,
         creds: &<Self::Data as WirelessData>::NetworkCredentials,
     ) -> Result<(), Error> {
+        let ssid = core::str::from_utf8(creds.ssid.0.vec.as_slice()).unwrap_or("???");
+
+        info!("Wifi connect request for SSID {ssid}");
+
         for auth_method in [
+            AuthMethod::WPA2Personal,
             AuthMethod::WPA2WPA3Personal,
             AuthMethod::WPAWPA2Personal,
             AuthMethod::WEP,
@@ -115,27 +158,32 @@ where
                 continue;
             }
 
+            info!("Trying with auth method {:?}", auth_method);
+
             let _ = self.0.stop().await;
+            info!("Wifi stopped");
 
             self.0
                 .set_configuration(&Configuration::Client(ClientConfiguration {
-                    ssid: core::str::from_utf8(creds.ssid.0.vec.as_slice())
-                        .unwrap_or("???")
-                        .try_into()
-                        .unwrap(),
+                    ssid: ssid.try_into().unwrap(),
                     auth_method,
                     password: creds.password.clone(),
                     ..Default::default()
                 }))
                 .await
                 .map_err(Self::to_err)?;
+            info!("Wifi configuration updated");
 
             self.0.start().await.map_err(Self::to_err)?;
+            info!("Wifi started");
 
             if self.0.connect().await.is_ok() {
+                info!("Wifi connected");
                 return Ok(());
             }
         }
+
+        warn!("Failed to connect to wifi {ssid}");
 
         Err(ErrorCode::NoNetworkInterface.into()) // TODO
     }
@@ -159,19 +207,6 @@ where
     }
 
     async fn stats(&mut self) -> Result<<Self::Data as WirelessData>::Stats, Error> {
-        // TODO: We need stats() in the Wifi trait
-
-        let conf = self.0.get_configuration().await.map_err(Self::to_err)?;
-
-        Ok(match conf {
-            Configuration::Client(_) => Some(WifiNwDiagData {
-                bssid: [0; 6],
-                security_type: wifi_nw_diagnostics::WiFiSecurity::Unspecified,
-                wifi_version: WiFiVersion::B,
-                channel_number: 20,
-                rssi: 0,
-            }),
-            _ => None,
-        })
+        Ok(None)
     }
 }
