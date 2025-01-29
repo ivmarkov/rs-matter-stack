@@ -35,13 +35,13 @@ You need to provide platform-specific implementations of the following traits fo
 - `Wireless` - Wireless (Wifi or Thread) abstraction of the device radio. Not necessary for Ethernet connectivity.
   - `DummyWireless` is a no-op wireless implementation that is useful for testing. I.e. on Linux, one can use `DummyWireless` together with `BuiltinBle` and `UnixNetif` to test the stack in wireless mode. For production embedded Linux use-cases, you'll have to provide a true `Wireless` implementation, possibly based on WPA Supplicant, or NetworkManager (not available out of the box in `rs-matter-stack` yet).
 
-## ESP-IDF
-
-The [`esp-idf-matter`](https://github.com/ivmarkov/esp-idf-matter) crate provides implementations for `Persist`, `Netif`, `Ble` and `Wireless` for the ESP-IDF SDK.
-
 ## Embassy
 
-TBD - upcoming!
+The [`rs-matter-embassy`](https://github.com/ivmarkov/rs-matter-embassy) crate provides implementations for `Persist`, `Netif`, `Ble` and `Wireless` for the [`embassy`](https://github.com/embassy-rs/embassy) framework.
+
+## ESP-IDF
+
+The [`esp-idf-matter`](https://github.com/ivmarkov/esp-idf-matter) crate provides implementations for `Persist`, `Netif`, `Ble` and `Wireless` for the [ESP-IDF SDK](https://github.com/esp-rs/esp-idf-svc).
 
 ## Example
 
