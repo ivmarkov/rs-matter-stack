@@ -8,7 +8,8 @@ use edge_nal::UdpBind;
 use embassy_futures::select::{select, select3};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use log::info;
+use embassy_time::{Duration, Timer};
+use log::{info, warn};
 
 use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Dataver, Endpoint};
 use rs_matter::data_model::root_endpoint;
@@ -22,6 +23,7 @@ use rs_matter::transport::network::btp::{Btp, BtpContext, GattPeripheral};
 use rs_matter::transport::network::NoNetwork;
 use rs_matter::utils::init::{init, Init};
 use rs_matter::utils::select::Coalesce;
+
 use traits::{
     BleTask, ConcurrencyMode, Thread, ThreadData, Wifi, WifiData, Wireless, WirelessConfig,
     WirelessData, WirelessTask, NC,
@@ -31,7 +33,6 @@ use crate::netif::Netif;
 use crate::network::{Embedding, Network};
 use crate::persist::Persist;
 use crate::private::Sealed;
-use crate::utils::futures::IntoFaillble;
 use crate::wireless::mgmt::WirelessManager;
 use crate::wireless::store::NetworkContext;
 use crate::wireless::traits::{Ble, Controller, NetworkCredentials};
@@ -511,11 +512,19 @@ where
 
         let mut net_task = pin!(self.run_transport_net(btp, btp));
 
-        let mut oper_net_act_task = pin!(self
-            .network
-            .network_context
-            .wait_network_activated()
-            .into_fallible());
+        let mut oper_net_act_task = pin!(async {
+            const WAIT_SECS: u64 = 4;
+
+            self.network.network_context.wait_network_activated().await;
+
+            warn!(
+                "Giving BLE/BTP extra {WAIT_SECS} seconds for any outstanding messages before switching to the operational network"
+            );
+
+            Timer::after(Duration::from_secs(WAIT_SECS)).await;
+
+            Ok(())
+        });
 
         select3(&mut btp_task, &mut net_task, &mut oper_net_act_task)
             .coalesce()

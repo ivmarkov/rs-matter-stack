@@ -1,9 +1,8 @@
 //! The network state store for the wireless module.
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_time::{Duration, Timer};
 
-use log::{info, warn};
+use log::info;
 
 use rs_matter::data_model::sdm::nw_commissioning::NetworkCommissioningStatus;
 use rs_matter::error::{Error, ErrorCode};
@@ -240,12 +239,6 @@ where
 
             self.network_connect_requested.wait().await;
         }
-
-        warn!(
-            "Giving BLE/BTP extra 4 seconds for any outstanding messages before switching to the operational network"
-        );
-
-        Timer::after(Duration::from_secs(4)).await;
     }
 
     pub async fn wait_state_changed(&self) {
