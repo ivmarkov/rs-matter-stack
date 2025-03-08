@@ -586,7 +586,7 @@ where
 
     /// Return a handler for the root (Endpoint 0) of the Matter Node
     /// configured for BLE+Wifi network.
-    pub fn root_handler<P>(
+    pub fn root_handler(
         &self,
     ) -> ThreadRootEndpointHandler<'_, M, &ControllerProxy<M, ThreadData>> {
         handler(
