@@ -14,25 +14,24 @@
 //! Using `edge-mdns` solves this problem by providing a general-purpose mDNS which can be
 //! shared between the `rs-matter` stack and other - user-specific use cases.
 
-use edge_mdns::host::Service;
-
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::signal::Signal;
 
 use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
 use rs_matter::error::{Error, ErrorCode};
-use rs_matter::mdns::{Mdns, ServiceMode};
+use rs_matter::mdns::{Mdns, Service, ServiceMode};
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::{init, Init};
-use rs_matter::utils::storage::pooled::BufferAccess;
 use rs_matter::utils::sync::blocking::Mutex;
 
 const MAX_MATTER_SERVICES: usize = 4;
 const MAX_MATTER_SERVICE_NAME_LEN: usize = 40;
 
 /// An adaptor from `rs-matter` buffers to `edge-mdns` buffers.
+#[cfg(feature = "edge-mdns")]
 pub struct MatterBuffer<B>(B);
 
+#[cfg(feature = "edge-mdns")]
 impl<B> MatterBuffer<B> {
     /// Create a new instance of `MatterBuffer`
     pub const fn new(buffer: B) -> Self {
@@ -40,9 +39,10 @@ impl<B> MatterBuffer<B> {
     }
 }
 
+#[cfg(feature = "edge-mdns")]
 impl<B, T> edge_mdns::buf::BufferAccess<T> for MatterBuffer<B>
 where
-    B: BufferAccess<T>,
+    B: rs_matter::utils::storage::pooled::BufferAccess<T>,
     T: ?Sized,
 {
     type Buffer<'a>
@@ -59,10 +59,10 @@ where
 /// - Implements the `rs-matter` `Mdns` trait and thus can be used as an mDNS implementation
 ///   for `rs-matter` with e.g. `MdnsService::Provided(&matter_services)`
 /// - Implements a publc visitor method - `visit_services` - that represents all services
-///   registered by `rs-matter` via the `Mdns` trait as `edge-net::host::Service` instances.
-///   With this in-place, `edge-mdns` can easily respond to queries concerning `rs-matter`
+///   registered by `rs-matter` via the `Mdns` trait
+///   With this in-place, e.g. `edge-mdns` can easily respond to queries concerning `rs-matter`
 ///   services by e.g. using the `HostAnswersMdnsHandler` struct and the `ServiceAnswers` adaptor.
-pub struct MatterServices<'a, M>
+pub struct MatterMdnsServices<'a, M>
 where
     M: RawMutex,
 {
@@ -80,7 +80,7 @@ where
     broadcast_signal: Signal<M, ()>,
 }
 
-impl<'a, M> MatterServices<'a, M>
+impl<'a, M> MatterMdnsServices<'a, M>
 where
     M: RawMutex,
 {
@@ -144,54 +144,60 @@ where
         &self.broadcast_signal
     }
 
-    /// Visit all services registered by `rs-matter` via the `Mdns` trait as `edge-net::host::Service` instances.
+    /// Visit all services registered by `rs-matter` via the `Mdns` trait.
     pub fn visit_services<T>(&self, mut visitor: T) -> Result<(), Error>
     where
-        T: FnMut(&Service) -> Result<(), Error>,
+        T: FnMut(&ServiceMode, &Service) -> Result<(), Error>,
     {
         self.services.lock(|services| {
             let services = services.borrow();
 
             for (service, mode) in &*services {
-                mode.service(
-                    self.dev_det,
-                    self.matter_port,
-                    service,
-                    |matter_service: &rs_matter::mdns::Service| {
-                        let service = Service {
-                            name: matter_service.name,
-                            service: matter_service.service,
-                            protocol: matter_service.protocol,
-                            port: matter_service.port,
-                            service_subtypes: matter_service.service_subtypes,
-                            txt_kvs: matter_service.txt_kvs,
-                            priority: 0,
-                            weight: 0,
-                        };
-
-                        visitor(&service)
-                    },
-                )?;
+                mode.service(self.dev_det, self.matter_port, service, |service| {
+                    visitor(mode, service)
+                })?;
             }
 
             Ok(())
         })
     }
+
+    /// Visit all services registered by `rs-matter` via the `Mdns` trait as `edge_mdns::host::Service` instances.
+    #[cfg(feature = "edge-mdns")]
+    pub fn visit_emdns_services<T>(&self, mut visitor: T) -> Result<(), Error>
+    where
+        T: FnMut(&edge_mdns::host::Service) -> Result<(), Error>,
+    {
+        self.visit_services(|(_, service)| {
+            let service = edge_mdns::host::Service {
+                name: service.name,
+                service: service.service,
+                protocol: service.protocol,
+                port: service.port,
+                service_subtypes: service.service_subtypes,
+                txt_kvs: service.txt_kvs,
+                priority: 0,
+                weight: 0,
+            };
+
+            visitor(&service)
+        })
+    }
 }
 
-impl<M> Mdns for MatterServices<'_, M>
+impl<M> Mdns for MatterMdnsServices<'_, M>
 where
     M: RawMutex,
 {
     fn reset(&self) {
-        MatterServices::reset(self)
+        MatterMdnsServices::reset(self)
     }
 
     fn add(&self, service: &str, mode: ServiceMode) -> Result<(), Error> {
-        MatterServices::add(self, service, mode)
+        MatterMdnsServices::add(self, service, mode)
     }
 
     fn remove(&self, service: &str) -> Result<(), Error> {
-        MatterServices::remove(self, service)
+        MatterMdnsServices::remove(self, service)
     }
 }

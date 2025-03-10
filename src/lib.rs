@@ -57,7 +57,6 @@ extern crate alloc;
 
 pub mod eth;
 pub mod matter;
-#[cfg(feature = "edge-mdns")]
 pub mod mdns;
 pub mod nal;
 pub mod netif;
