@@ -84,13 +84,15 @@ where
                             let state = state.borrow();
 
                             for network in &state.networks {
+                                let network_id = network.network_id();
+
                                 let nw_info = NwInfo {
-                                    network_id: Octets(network.network_id().as_ref()),
+                                    network_id: Octets(network_id.as_ref()),
                                     connected: state
                                         .status
                                         .as_ref()
                                         .map(|status| {
-                                            &status.network_id == network.network_id()
+                                            status.network_id == network_id
                                                 && matches!(
                                                     status.status,
                                                     NetworkCommissioningStatus::Success
@@ -432,7 +434,7 @@ where
             state
                 .networks
                 .iter()
-                .find(|conf| conf.network_id() == &network_id)
+                .find(|conf| conf.network_id() == network_id)
                 .cloned()
         });
 

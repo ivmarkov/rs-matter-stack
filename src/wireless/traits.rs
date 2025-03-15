@@ -37,7 +37,7 @@ pub trait NetworkCredentials:
         + 'static;
 
     /// Return the network ID
-    fn network_id(&self) -> &Self::NetworkId;
+    fn network_id(&self) -> Self::NetworkId;
 }
 
 /// Concrete Network ID type for Wifi networks
@@ -100,8 +100,8 @@ impl Sealed for WifiCredentials {}
 impl NetworkCredentials for WifiCredentials {
     type NetworkId = WifiSsid;
 
-    fn network_id(&self) -> &Self::NetworkId {
-        &self.ssid
+    fn network_id(&self) -> Self::NetworkId {
+        self.ssid.clone()
     }
 }
 
@@ -156,6 +156,40 @@ pub struct ThreadCredentials {
     pub op_dataset: rs_matter::utils::storage::Vec<u8, 256>,
 }
 
+impl ThreadCredentials {
+    const EMPTY_ID: ThreadId = ThreadId(OctetsOwned { vec: Vec::new() });
+
+    // Adopted from here:
+    // https://gist.github.com/agners/0338576e0003318b63ec1ea75adc90f9
+    fn ext_pan_id(&self) -> Option<ThreadId> {
+        const EXT_PAN_ID: u8 = 2;
+
+        let mut slice = self.op_dataset.as_slice();
+
+        while !slice.is_empty() {
+            if slice.len() < 2 {
+                break;
+            }
+
+            let tlv_type = slice[0];
+            let tlv_len = slice[1] as usize;
+
+            let rest = &slice[2..];
+            if tlv_len > rest.len() {
+                break;
+            }
+
+            if tlv_type == EXT_PAN_ID {
+                return Some(rest[..tlv_len].try_into().unwrap());
+            }
+
+            slice = rest;
+        }
+
+        None
+    }
+}
+
 impl TryFrom<&AddWifiNetworkRequest<'_>> for ThreadCredentials {
     type Error = Error;
 
@@ -180,8 +214,8 @@ impl Sealed for ThreadCredentials {}
 impl NetworkCredentials for ThreadCredentials {
     type NetworkId = ThreadId;
 
-    fn network_id(&self) -> &Self::NetworkId {
-        todo!()
+    fn network_id(&self) -> Self::NetworkId {
+        self.ext_pan_id().unwrap_or(Self::EMPTY_ID)
     }
 }
 

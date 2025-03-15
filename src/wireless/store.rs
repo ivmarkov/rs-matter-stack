@@ -67,7 +67,7 @@ where
             let creds = self
                 .networks
                 .iter()
-                .find(|creds| creds.network_id() == &network_id);
+                .find(|creds| creds.network_id() == network_id);
 
             if let Some(creds) = creds {
                 info!(
@@ -90,7 +90,7 @@ where
             let mut networks = self.networks.iter();
 
             for network in &mut networks {
-                if network.network_id() == last_network_id {
+                if network.network_id() == *last_network_id {
                     break;
                 }
             }
