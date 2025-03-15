@@ -123,7 +123,7 @@ impl TryFrom<&[u8]> for ThreadId {
     type Error = Error;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        if value.len() != 8 {
+        if value.len() > 8 {
             Err(ErrorCode::InvalidData)?;
         }
 
