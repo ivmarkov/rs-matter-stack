@@ -62,6 +62,7 @@ pub mod nal;
 pub mod netif;
 pub mod network;
 pub mod persist;
+pub mod rand;
 pub mod test_device;
 pub mod udp;
 pub mod utils;
