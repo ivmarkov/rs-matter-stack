@@ -437,7 +437,7 @@ where
 {
     type Data = ThreadData;
 
-    const CONCURRENT: bool = true;
+    const CONCURRENT: bool = T::CONCURRENT;
 }
 
 impl ConcurrentWirelessConfig for Thread {}
