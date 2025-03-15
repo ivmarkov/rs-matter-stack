@@ -144,8 +144,8 @@ impl Display for ThreadId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "EPAN ID::{:x}",
-            u64::from_le_bytes(self.0.vec.clone().into_array().unwrap())
+            "EPAN ID::0x{:08x}",
+            u64::from_be_bytes(self.0.vec.clone().into_array().unwrap())
         )
     }
 }
