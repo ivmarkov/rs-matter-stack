@@ -115,6 +115,68 @@ pub struct WifiScanResult {
     pub rssi: Option<i8>,
 }
 
+/// A simple Thread TLV reader
+pub struct ThreadTlvRead<'a>(&'a [u8]);
+
+impl<'a> ThreadTlvRead<'a> {
+    /// Create a new `ThreadTlvRead` instance with the given TLV data
+    pub const fn new(tlv: &'a [u8]) -> Self {
+        Self(tlv)
+    }
+
+    /// Get the next TLV from the data
+    ///
+    /// Returns `Some` with the TLV type and value if there is a TLV available,
+    /// otherwise returns `None`.
+    pub fn next_tlv(&mut self) -> Option<(u8, &'a [u8])> {
+        const LONG_VALUE_ID: u8 = 255;
+
+        // Adopted from here:
+        // https://github.com/openthread/openthread/blob/main/tools/tcat_ble_client/tlv/tlv.py
+
+        let mut slice = self.0;
+
+        (slice.len() >= 2).then_some(())?;
+
+        let tlv_type = slice[0];
+        slice = &slice[1..];
+
+        let tlv_len_size = if slice[0] == LONG_VALUE_ID {
+            slice = &slice[1..];
+            3
+        } else {
+            1
+        };
+
+        (slice.len() >= tlv_len_size).then_some(())?;
+
+        let tlv_len = if tlv_len_size == 1 {
+            slice[0] as usize
+        } else {
+            u32::from_be_bytes([0, slice[0], slice[1], slice[2]]) as usize
+        };
+
+        slice = &slice[tlv_len_size..];
+        (slice.len() >= tlv_len).then_some(())?;
+
+        let tlv_value = &slice[..tlv_len];
+
+        slice = &slice[tlv_len..];
+
+        self.0 = slice;
+
+        Some((tlv_type, tlv_value))
+    }
+}
+
+impl<'a> Iterator for ThreadTlvRead<'a> {
+    type Item = (u8, &'a [u8]);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_tlv()
+    }
+}
+
 /// Concrete Network ID type for Thread networks
 #[derive(Debug, Clone, PartialEq, FromTLV, ToTLV)]
 pub struct ThreadId(pub OctetsOwned<8>);
@@ -159,34 +221,18 @@ pub struct ThreadCredentials {
 impl ThreadCredentials {
     const EMPTY_ID: ThreadId = ThreadId(OctetsOwned { vec: Vec::new() });
 
-    // Adopted from here:
-    // https://gist.github.com/agners/0338576e0003318b63ec1ea75adc90f9
-    fn ext_pan_id(&self) -> Option<ThreadId> {
+    /// Get the Extended PAN ID from the operational dataset
+    fn ext_pan_id(&self) -> Result<ThreadId, Error> {
         const EXT_PAN_ID: u8 = 2;
 
-        let mut slice = self.op_dataset.as_slice();
+        let ext_pan_id = ThreadTlvRead::new(self.op_dataset.as_slice())
+            .find_map(|(tlv_type, tlv_value)| (tlv_type == EXT_PAN_ID).then_some(tlv_value));
 
-        while !slice.is_empty() {
-            if slice.len() < 2 {
-                break;
-            }
+        let Some(ext_pan_id) = ext_pan_id else {
+            return Ok(Self::EMPTY_ID);
+        };
 
-            let tlv_type = slice[0];
-            let tlv_len = slice[1] as usize;
-
-            let rest = &slice[2..];
-            if tlv_len > rest.len() {
-                break;
-            }
-
-            if tlv_type == EXT_PAN_ID {
-                return Some(rest[..tlv_len].try_into().unwrap());
-            }
-
-            slice = rest;
-        }
-
-        None
+        ThreadId::try_from(ext_pan_id)
     }
 }
 
