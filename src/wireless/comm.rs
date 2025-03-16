@@ -365,6 +365,9 @@ where
     ) -> Result<(), Error> {
         // TODO: Check failsafe status
 
+        let network_id: <<T::Data as WirelessData>::NetworkCredentials as NetworkCredentials>::NetworkId =
+            req.network_id.0.try_into()?;
+
         self.networks.state.lock(|state| {
             let mut state = state.borrow_mut();
 
@@ -389,10 +392,7 @@ where
                     network_index: Some(index as _),
                 })?;
             } else {
-                warn!(
-                    "Network with ID {} not found",
-                    core::str::from_utf8(req.network_id.0).unwrap()
-                );
+                warn!("Network with ID {network_id} not found");
 
                 // Not found
                 writer.set(NetworkConfigResponse {
@@ -421,10 +421,7 @@ where
         let network_id: <<T::Data as WirelessData>::NetworkCredentials as NetworkCredentials>::NetworkId =
             req.network_id.0.try_into()?;
 
-        info!(
-            "Request to connect to network with ID {} received",
-            core::str::from_utf8(req.network_id.0).unwrap(),
-        );
+        info!("Request to connect to network with ID {network_id} received");
 
         let mut controller = self.controller.lock().await;
 
@@ -472,6 +469,9 @@ where
     ) -> Result<(), Error> {
         // TODO: Check failsafe status
 
+        let network_id: <<T::Data as WirelessData>::NetworkCredentials as NetworkCredentials>::NetworkId =
+            req.network_id.0.try_into()?;
+
         self.networks.state.lock(|state| {
             let mut state = state.borrow_mut();
 
@@ -497,8 +497,7 @@ where
                     self.networks.state_changed.notify();
 
                     info!(
-                        "Network with ID {} reordered to index {}",
-                        core::str::from_utf8(req.network_id.0).unwrap(),
+                        "Network with ID {network_id} reordered to index {}",
                         req.index
                     );
 
@@ -509,8 +508,7 @@ where
                     })?;
                 } else {
                     warn!(
-                        "Reordering network with ID {} to index {} failed: out of range",
-                        core::str::from_utf8(req.network_id.0).unwrap(),
+                        "Reordering network with ID {network_id} to index {} failed: out of range",
                         req.index
                     );
 
@@ -521,10 +519,7 @@ where
                     })?;
                 }
             } else {
-                warn!(
-                    "Network with ID {} not found",
-                    core::str::from_utf8(req.network_id.0).unwrap()
-                );
+                warn!("Network with ID {network_id} not found");
 
                 // Not found
                 writer.set(NetworkConfigResponse {
