@@ -1,4 +1,4 @@
-use rand_core::{CryptoRng, Error, RngCore};
+pub use rand_core::{CryptoRng, Error, RngCore};
 
 use rs_matter::utils::rand::Rand;
 
