@@ -1,6 +1,10 @@
 //! UDP transport implementation for edge-nal
 
+use core::fmt::Debug;
+
 use edge_nal::{Readable, UdpReceive, UdpSend};
+
+use log::warn;
 
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::transport::network::{Address, NetworkReceive, NetworkSend};
@@ -40,6 +44,7 @@ where
     }
 }
 
-fn map_err<E>(_: E) -> Error {
+fn map_err<E: Debug>(e: E) -> Error {
+    warn!("Network error: {:?}", e);
     ErrorCode::StdIoError.into() // TODO
 }
