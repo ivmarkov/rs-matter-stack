@@ -1,4 +1,4 @@
-//! An example utilizing the `WifiNCMatterStack` struct.
+//! An example utilizing the `WifiMatterStack` struct.
 //!
 //! As the name suggests, this Matter stack assembly uses Wifi as the main transport
 //! (and thus also BLE for commissioning).
@@ -20,15 +20,15 @@ use rs_matter_stack::matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter_stack::matter::data_model::objects::{Dataver, Endpoint, HandlerCompat, Node};
 use rs_matter_stack::matter::data_model::system_model::descriptor;
 use rs_matter_stack::matter::error::Error;
+use rs_matter_stack::matter::transport::network::btp::BuiltinGattPeripheral;
 use rs_matter_stack::matter::utils::init::InitMaybeUninit;
 use rs_matter_stack::matter::utils::select::Coalesce;
 use rs_matter_stack::matter::utils::sync::blocking::raw::StdRawMutex;
 use rs_matter_stack::netif::UnixNetif;
-use rs_matter_stack::persist::{new_kv, DirKvBlobStore, KvBlobBuf};
+use rs_matter_stack::persist::DirKvBlobStore;
 use rs_matter_stack::test_device::{TEST_BASIC_COMM_DATA, TEST_DEV_ATT, TEST_PID, TEST_VID};
 use rs_matter_stack::wireless::traits::{DisconnectedController, PreexistingWireless};
-use rs_matter_stack::wireless::BuiltinBle;
-use rs_matter_stack::WifiNCMatterStack;
+use rs_matter_stack::WifiMatterStack;
 
 use static_cell::StaticCell;
 
@@ -43,7 +43,7 @@ fn main() -> Result<(), Error> {
     // as we'll run it in this thread
     let stack = MATTER_STACK
         .uninit()
-        .init_with(WifiNCMatterStack::init_default(
+        .init_with(WifiMatterStack::init_default(
             &BasicInfoConfig {
                 vid: TEST_VID,
                 pid: TEST_PID,
@@ -88,17 +88,17 @@ fn main() -> Result<(), Error> {
     // Run the Matter stack with our handler
     // Using `pin!` is completely optional, but saves some memory due to `rustc`
     // not being very intelligent w.r.t. stack usage in async functions
+    let store = stack.create_shared_store(DirKvBlobStore::new_default());
     let mut matter = pin!(stack.run(
         // A dummy wireless modem which does nothing
         PreexistingWireless::new(
             UnixNetif::new_default(),
             edge_nal_std::Stack::new(),
-            DisconnectedController::new()
+            DisconnectedController::new(),
+            BuiltinGattPeripheral::new(None),
         ),
-        // A Linux-specific modem using BlueZ
-        BuiltinBle::new(None),
         // Will persist in `<tmp-dir>/rs-matter`
-        new_kv(DirKvBlobStore::new_default(), stack),
+        &store,
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
         // No user future to run
@@ -135,7 +135,7 @@ fn main() -> Result<(), Error> {
 /// The Matter stack is allocated statically to avoid
 /// program stack blowups.
 /// It is also a mandatory requirement when the `WifiBle` stack variation is used.
-static MATTER_STACK: StaticCell<WifiNCMatterStack<StdRawMutex, KvBlobBuf<()>>> = StaticCell::new();
+static MATTER_STACK: StaticCell<WifiMatterStack<StdRawMutex>> = StaticCell::new();
 
 /// Endpoint 0 (the root endpoint) always runs
 /// the hidden Matter system clusters, so we pick ID=1
@@ -145,7 +145,7 @@ const LIGHT_ENDPOINT_ID: u16 = 1;
 const NODE: Node = Node {
     id: 0,
     endpoints: &[
-        WifiNCMatterStack::<StdRawMutex, KvBlobBuf<()>>::root_metadata(),
+        WifiMatterStack::<StdRawMutex, ()>::root_metadata(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
             device_types: &[DEV_TYPE_ON_OFF_LIGHT],

@@ -13,7 +13,7 @@ use rs_matter::utils::storage::WriteBuf;
 use rs_matter::utils::sync::blocking::Mutex;
 use rs_matter::utils::sync::Notification;
 
-use crate::persist::{Key, NetworkPersist};
+use crate::persist::{MatterStackKey, NetworkPersist};
 use crate::private::Sealed;
 
 use super::proxy::ControllerProxy;
@@ -277,31 +277,31 @@ where
     T: WirelessData,
     T::NetworkCredentials: Clone + for<'a> FromTLV<'a> + ToTLV,
 {
-    const KEY: crate::persist::Key = if T::WIFI {
-        Key::WifiNetworks
+    const KEY: crate::persist::MatterStackKey = if T::WIFI {
+        MatterStackKey::WifiNetworks
     } else {
-        Key::ThreadNetworks
+        MatterStackKey::ThreadNetworks
     };
 
-    fn reset(&mut self) -> Result<(), Error> {
+    fn reset(&self) -> Result<(), Error> {
         NetworkContext::reset(self);
 
         Ok(())
     }
 
-    fn load(&mut self, data: &[u8]) -> Result<(), Error> {
+    fn load(&self, data: &[u8]) -> Result<(), Error> {
         NetworkContext::load(self, data)
     }
 
-    fn store(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
+    fn store(&self, buf: &mut [u8]) -> Result<usize, Error> {
         NetworkContext::store(self, buf)
     }
 
-    fn changed(&mut self) -> Result<bool, Error> {
-        Ok(NetworkContext::changed(self))
+    fn changed(&self) -> bool {
+        NetworkContext::changed(self)
     }
 
-    async fn wait_state_changed(&mut self) {
+    async fn wait_state_changed(&self) {
         NetworkContext::wait_state_changed(self).await;
     }
 }

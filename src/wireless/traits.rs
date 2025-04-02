@@ -16,6 +16,8 @@ use rs_matter::utils::storage::Vec;
 use crate::netif::Netif;
 use crate::private::Sealed;
 
+impl Sealed for () {}
+
 /// A trait representing the credentials of a wireless network (Wifi or Thread).
 ///
 /// The trait is sealed and has only two implementations: `WifiCredentials` and `ThreadCredentials`.
@@ -470,84 +472,78 @@ impl WirelessData for ThreadData {
     const WIFI: bool = false;
 }
 
-/// A trait representing a wireless configuration, i.e. what data (Wifi or Thread) and
-/// whether the wireless network should be used in concurrent commissioning mode or not.
+/// A trait representing a wireless configuration, i.e. what data (Wifi or Thread).
 ///
-/// The trait is sealed and has only two implementations: `Wifi<T>` and `Thread<T>`.
+/// The trait is sealed and has only two implementations: `Wifi` and `Thread`.
 pub trait WirelessConfig: Sealed + 'static {
     /// The type of the wireless data (WifiData or ThreadData)
     type Data: WirelessData;
-
-    /// Whether this wireless configuration supports concurrent commisioning
-    /// (i.e. both BLE and Wifi/Thread radios active at the same time)
-    const CONCURRENT: bool;
 }
-
-/// A marker trait for wireless configurations that will do concurrent commissioning
-///
-/// The trait is sealed and has only two implementations: `Wifi<()>` and `Thread<()>`.
-pub trait ConcurrentWirelessConfig: WirelessConfig {}
 
 /// A struct representing a Wifi wireless configuration
 #[derive(Debug)]
-pub struct Wifi<T = ()>(T);
+pub struct Wifi;
 
-impl<T: 'static> Sealed for Wifi<T> {}
+impl Sealed for Wifi {}
 
-impl<T: 'static> WirelessConfig for Wifi<T>
-where
-    T: ConcurrencyMode,
-{
+impl WirelessConfig for Wifi {
     type Data = WifiData;
-
-    const CONCURRENT: bool = T::CONCURRENT;
 }
-
-impl ConcurrentWirelessConfig for Wifi {}
 
 /// A struct representing a Thread wireless configuration
 #[derive(Debug)]
-pub struct Thread<T = ()>(T);
+pub struct Thread;
 
-impl<T: 'static> Sealed for Thread<T> {}
+impl Sealed for Thread {}
 
-impl<T: 'static> WirelessConfig for Thread<T>
-where
-    T: ConcurrencyMode,
-{
+impl WirelessConfig for Thread {
     type Data = ThreadData;
-
-    const CONCURRENT: bool = T::CONCURRENT;
 }
 
-impl ConcurrentWirelessConfig for Thread {}
-
-/// A marker trait representing whether the wireless configuration
-/// indicates whether concurrent or non-concurrent commissioning will be used.
-///
-/// The trait is sealed and has only two implementations:
-/// - `()` which indicates a wireless configuration for concurrent provisioning
-/// - `NC` which indicates a wireless configuration for non-concurrent provisioning
-pub trait ConcurrencyMode: Sealed + 'static {
-    const CONCURRENT: bool;
+/// A trait representing a task that needs access to the BLE GATT peripheral to perform its work
+/// (e.g. the first part of a non-concurrent commissioning flow)
+pub trait GattTask {
+    /// Run the task with the given GATT peripheral
+    async fn run<P>(&mut self, peripheral: P) -> Result<(), Error>
+    where
+        P: GattPeripheral;
 }
 
-impl Sealed for () {}
-
-impl ConcurrencyMode for () {
-    const CONCURRENT: bool = true;
+impl<T> GattTask for &mut T
+where
+    T: GattTask,
+{
+    async fn run<P>(&mut self, peripheral: P) -> Result<(), Error>
+    where
+        P: GattPeripheral,
+    {
+        T::run(*self, peripheral).await
+    }
 }
 
-#[derive(Debug)]
-pub struct NC;
-
-impl Sealed for NC {}
-
-impl ConcurrencyMode for NC {
-    const CONCURRENT: bool = false;
+/// A trait for running a task within a context where the BLE peripheral is initialized and operable
+/// (e.g. the first part of a non-concurrent commissioning workflow)
+pub trait Gatt {
+    /// Setup the radio to operate in wireless (Wifi or Thread) mode
+    /// and run the given task
+    async fn run<T>(&mut self, task: T) -> Result<(), Error>
+    where
+        T: GattTask;
 }
 
-/// A trait representing a task that needs access to the wireless interface
+impl<T> Gatt for &mut T
+where
+    T: Gatt,
+{
+    async fn run<A>(&mut self, task: A) -> Result<(), Error>
+    where
+        A: GattTask,
+    {
+        T::run(self, task).await
+    }
+}
+
+/// A trait representing a task that needs access to the operational wireless interface (Wifi or Thread)
 /// (Netif, UDP stack and Wireless controller) to perform its work.
 pub trait WirelessTask {
     type Data: WirelessData;
@@ -602,27 +598,130 @@ where
     }
 }
 
+/// A trait representing a task that needs access to the operational wireless interface (Wifi or Thread)
+/// as well as to the commissioning BTP GATT peripheral.
+///
+/// Typically, tasks performing the Matter concurrent commissioning workflow will implement this trait.
+pub trait WirelessCoexTask {
+    type Data: WirelessData;
+
+    /// Run the task with the given network interface, UDP stack and wireless controller
+    async fn run<N, U, C, G>(
+        &mut self,
+        netif: N,
+        udp: U,
+        controller: C,
+        gatt: G,
+    ) -> Result<(), Error>
+    where
+        N: Netif,
+        U: UdpBind,
+        C: Controller<Data = Self::Data>,
+        G: GattPeripheral;
+}
+
+impl<T> WirelessCoexTask for &mut T
+where
+    T: WirelessCoexTask,
+{
+    type Data = T::Data;
+
+    async fn run<N, U, C, G>(
+        &mut self,
+        netif: N,
+        udp: U,
+        controller: C,
+        gatt: G,
+    ) -> Result<(), Error>
+    where
+        N: Netif,
+        U: UdpBind,
+        C: Controller<Data = Self::Data>,
+        G: GattPeripheral,
+    {
+        T::run(*self, netif, udp, controller, gatt).await
+    }
+}
+
+/// A trait for running a task within a context where both the wireless interface (Thread or Wifi)
+/// is initialized and operable, as well as the BLE GATT peripheral is also operable.
+///
+/// Typically, tasks performing the Matter concurrent commissioning workflow will ran by implementations
+/// of this trait.
+pub trait WirelessCoex {
+    /// The type of the wireless data (WifiData or ThreadData)
+    type Data: WirelessData;
+
+    /// Setup the radio to operate in wireless coexist mode (Wifi or Thread + BLE)
+    /// and run the given task
+    async fn run<T>(&mut self, task: T) -> Result<(), Error>
+    where
+        T: WirelessCoexTask<Data = Self::Data>;
+}
+
+impl<T> WirelessCoex for &mut T
+where
+    T: WirelessCoex,
+{
+    type Data = T::Data;
+
+    async fn run<A>(&mut self, task: A) -> Result<(), Error>
+    where
+        A: WirelessCoexTask<Data = Self::Data>,
+    {
+        T::run(self, task).await
+    }
+}
+
 /// A utility type for running a wireless task with a pre-existing wireless interface
 /// rather than bringing up / tearing down the wireless interface for the task.
-pub struct PreexistingWireless<N, U, C> {
+///
+/// This utility can only be used with hardware that implements wireless coexist mode
+/// (i.e. the Thread/Wifi interface as well as the BLE GATT peripheral are available at the same time).
+pub struct PreexistingWireless<N, U, C, G> {
     netif: N,
     udp: U,
     controller: C,
+    gatt: G,
 }
 
-impl<N, U, C> PreexistingWireless<N, U, C> {
-    /// Create a new `PreexistingWireless` instance with the given network interface, UDP stack
-    /// and wireless controller
-    pub const fn new(netif: N, udp: U, controller: C) -> Self {
+impl<N, U, C, G> PreexistingWireless<N, U, C, G> {
+    /// Create a new `PreexistingWireless` instance with the given network interface, UDP stack,
+    /// wireless controller and GATT peripheral.
+    pub const fn new(netif: N, udp: U, controller: C, gatt: G) -> Self {
         Self {
             netif,
             udp,
             controller,
+            gatt,
         }
     }
 }
 
-impl<N, U, C> Wireless for PreexistingWireless<N, U, C>
+impl<N, U, C, P> WirelessCoex for PreexistingWireless<N, U, C, P>
+where
+    N: Netif,
+    U: UdpBind,
+    C: Controller,
+    P: GattPeripheral,
+{
+    type Data = C::Data;
+
+    async fn run<T>(&mut self, mut task: T) -> Result<(), Error>
+    where
+        T: WirelessCoexTask<Data = Self::Data>,
+    {
+        task.run(
+            &mut self.netif,
+            &mut self.udp,
+            &mut self.controller,
+            &mut self.gatt,
+        )
+        .await
+    }
+}
+
+impl<N, U, C, P> Wireless for PreexistingWireless<N, U, C, P>
 where
     N: Netif,
     U: UdpBind,
@@ -639,68 +738,14 @@ where
     }
 }
 
-/// A trait representing a task that needs access to the BLE peripheral to perform its work
-pub trait BleTask {
-    /// Run the task with the given GATT peripheral
-    async fn run<P>(&mut self, peripheral: P) -> Result<(), Error>
-    where
-        P: GattPeripheral;
-}
-
-impl<T> BleTask for &mut T
-where
-    T: BleTask,
-{
-    async fn run<P>(&mut self, peripheral: P) -> Result<(), Error>
-    where
-        P: GattPeripheral,
-    {
-        T::run(*self, peripheral).await
-    }
-}
-
-/// A trait for running a task within a context where the BLE peripheral is initialized and operable
-/// (e.g. in a commissioning workflow)
-pub trait Ble {
-    /// Setup the radio to operate in BLE mode and run the given task
-    async fn run<T>(&mut self, task: T) -> Result<(), Error>
-    where
-        T: BleTask;
-}
-
-impl<T> Ble for &mut T
-where
-    T: Ble,
-{
-    async fn run<A>(&mut self, task: A) -> Result<(), Error>
-    where
-        A: BleTask,
-    {
-        T::run(self, task).await
-    }
-}
-
-/// A utility type for running a BLE task with a pre-existing BLE peripheral
-/// rather than bringing up / tearing down the BLE peripheral for the task.
-pub struct PreexistingBle<P> {
-    peripheral: P,
-}
-
-impl<P> PreexistingBle<P> {
-    /// Create a new `PreexistingBle` instance with the given GATT peripheral
-    pub const fn new(peripheral: P) -> Self {
-        Self { peripheral }
-    }
-}
-
-impl<P> Ble for PreexistingBle<P>
+impl<N, U, C, P> Gatt for PreexistingWireless<N, U, C, P>
 where
     P: GattPeripheral,
 {
     async fn run<T>(&mut self, mut task: T) -> Result<(), Error>
     where
-        T: BleTask,
+        T: GattTask,
     {
-        task.run(&mut self.peripheral).await
+        task.run(&mut self.gatt).await
     }
 }

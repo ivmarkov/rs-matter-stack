@@ -22,7 +22,7 @@ use rs_matter::utils::select::Coalesce;
 
 use crate::netif::Netif;
 use crate::network::{Embedding, Network};
-use crate::persist::Persist;
+use crate::persist::{KvBlobStore, SharedKvBlobStore};
 use crate::private::Sealed;
 use crate::MatterStack;
 
@@ -65,7 +65,7 @@ where
     }
 }
 
-pub type EthMatterStack<'a, E> = MatterStack<'a, Eth<E>>;
+pub type EthMatterStack<'a, E = ()> = MatterStack<'a, Eth<E>>;
 
 /// A specialization of the `MatterStack` for Ethernet.
 impl<E> MatterStack<'_, Eth<E>>
@@ -111,18 +111,18 @@ where
     /// - `persist` - a user-provided `Persist` implementation
     /// - `handler` - a user-provided DM handler implementation
     /// - `user` - a user-provided future that will be polled only when the netif interface is up
-    pub async fn run<N, U, P, H, X>(
+    pub async fn run<N, U, S, H, X>(
         &self,
         netif: N,
         udp: U,
-        persist: P,
+        store: &SharedKvBlobStore<'_, S>,
         handler: H,
         user: X,
     ) -> Result<(), Error>
     where
         N: Netif,
         U: UdpBind,
-        P: Persist,
+        S: KvBlobStore,
         H: AsyncHandler + AsyncMetadata,
         X: Future<Output = Result<(), Error>>,
     {
@@ -138,13 +138,15 @@ where
                 .await?; // TODO
         }
 
+        let persist = self.create_persist(store);
+
         let mut net_task = pin!(self.run_oper_net(
             netif,
             udp,
             core::future::pending(),
             Option::<(NoNetwork, NoNetwork)>::None
         ));
-        let mut handler_task = pin!(self.run_handlers(persist, handler));
+        let mut handler_task = pin!(self.run_handlers(&persist, handler));
         let mut user_task = pin!(user);
 
         select3(&mut net_task, &mut handler_task, &mut user_task)

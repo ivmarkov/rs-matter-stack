@@ -3,12 +3,13 @@ use core::pin::pin;
 
 use diag::thread::ThreadNwDiagCluster;
 use diag::wifi::WifiNwDiagCluster;
+
 use edge_nal::UdpBind;
 
 use embassy_futures::select::{select, select3};
 use embassy_sync::blocking_mutex::raw::RawMutex;
-
 use embassy_time::{Duration, Timer};
+
 use log::{info, warn};
 
 use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Dataver, Endpoint};
@@ -25,23 +26,19 @@ use rs_matter::utils::init::{init, Init};
 use rs_matter::utils::select::Coalesce;
 
 use traits::{
-    BleTask, ConcurrencyMode, Thread, ThreadData, Wifi, WifiData, Wireless, WirelessConfig,
-    WirelessData, WirelessTask, NC,
+    Controller, Gatt, GattTask, NetworkCredentials, Thread, ThreadData, Wifi, WifiData, Wireless,
+    WirelessCoex, WirelessCoexTask, WirelessConfig, WirelessData, WirelessTask,
 };
 
 use crate::netif::Netif;
 use crate::network::{Embedding, Network};
-use crate::persist::Persist;
+use crate::persist::{KvBlobStore, SharedKvBlobStore};
 use crate::private::Sealed;
 use crate::wireless::mgmt::WirelessManager;
 use crate::wireless::store::NetworkContext;
-use crate::wireless::traits::{Ble, Controller, NetworkCredentials};
 use crate::MatterStack;
 
 use self::proxy::ControllerProxy;
-
-#[cfg(all(feature = "os", target_os = "linux"))]
-pub use bluez::*;
 
 pub mod comm;
 pub mod diag;
@@ -57,7 +54,8 @@ const MAX_WIRELESS_NETWORKS: usize = 2;
 /// BLE during commissioning, and then over either WiFi or Thread when operating.
 ///
 /// The supported commissioning is either concurrent or non-concurrent (as per the Matter Core spec),
-/// where one over the other is decided compile-time with the concrete `WirelessConfig` type.
+/// where one over the other is decided at runtime with the concrete wireless implementation
+/// (`WirelessCoex` or `Wireless` + `Gatt`).
 ///
 /// Non-concurrent commissioning means that the device - at any point in time - either runs Bluetooth
 /// or Wifi/Thread, but not both.
@@ -154,34 +152,10 @@ where
 }
 
 /// A type alias for a Matter stack running over Wifi (and BLE, during commissioning).
-pub type WifiMatterStack<'a, M, E> = MatterStack<'a, WirelessBle<M, Wifi, E>>;
+pub type WifiMatterStack<'a, M, E = ()> = MatterStack<'a, WirelessBle<M, Wifi, E>>;
 
 /// A type alias for a Matter stack running over Thread (and BLE, during commissioning).
-pub type ThreadMatterStack<'a, M, E> = MatterStack<'a, WirelessBle<M, Thread, E>>;
-
-/// A type alias for a Matter stack running over Wifi (and BLE, during commissioning).
-///
-/// Unlike `WifiMatterStack`, this type alias runs the commissioning in a non-concurrent mode,
-/// where the device runs either BLE or Wifi, but not both at the same time.
-///
-/// This is useful for devices which share a single wireless radio for both BLE and Wifi
-/// and do not have BLE+Wifi co-exist drivers, or just to save memory by only having one of
-/// the stacks active at any point in time.
-///
-/// Note that Alexa does not (yet) work with non-concurrent commissioning.
-pub type WifiNCMatterStack<'a, M, E> = MatterStack<'a, WirelessBle<M, Wifi<NC>, E>>;
-
-/// A type alias for a Matter stack running over Thread (and BLE, during commissioning).
-///
-/// Unlike `ThreadMatterStack`, this type alias runs the commissioning in a non-concurrent mode,
-/// where the device runs either BLE or Thread, but not both at the same time.
-///
-/// This is useful for devices which share a single wireless radio for both BLE and Thread
-/// and do not have BLE+Thread co-exist drivers, or just to save memory by only having one of
-/// the stacks active at any point in time.
-///
-/// Note that Alexa does not (yet) work with non-concurrent commissioning.
-pub type ThreadNCMatterStack<'a, M, E> = MatterStack<'a, WirelessBle<M, Thread<NC>, E>>;
+pub type ThreadMatterStack<'a, M, E = ()> = MatterStack<'a, WirelessBle<M, Thread, E>>;
 
 impl<M, T, E> MatterStack<'_, WirelessBle<M, T, E>>
 where
@@ -201,37 +175,36 @@ where
         Ok(())
     }
 
-    /// Run the Matter stack for a wireless network.
+    /// Run the Matter stack for a wireless network where the BLE and the operational network can co-exist.
     ///
     /// Parameters:
     /// - `wireless` - a user-provided `Wireless` implementation
-    /// - `ble` - a user-provided `Ble` implementation
-    /// - `persist` - a user-provided `Persist` implementation
+    /// - `store` - a `SharedKvBlobStore` implementation wrapping a user-provided `KvBlobStore`
     /// - `handler` - a user-provided DM handler implementation
     /// - `user` - a user-provided future that will be polled only when the netif interface is up
-    pub async fn run<W, B, P, H, U>(
+    pub async fn run_coex<W, S, H, U>(
         &'static self,
         wireless: W,
-        ble: B,
-        persist: P,
+        store: &SharedKvBlobStore<'_, S>,
         handler: H,
         user: U,
     ) -> Result<(), Error>
     where
-        W: Wireless<Data = T::Data>,
-        B: Ble,
-        P: Persist,
+        W: WirelessCoex<Data = T::Data>,
+        S: KvBlobStore,
         H: AsyncHandler + AsyncMetadata,
         U: Future<Output = Result<(), Error>>,
     {
         info!("Matter Stack memory: {}B", core::mem::size_of_val(self));
 
+        let persist = self.create_persist(store);
+
         // TODO persist.load().await?;
 
         self.matter().reset_transport()?;
 
-        let mut net_task = pin!(self.run_net(wireless, ble));
-        let mut handler_task = pin!(self.run_handlers(persist, handler));
+        let mut net_task = pin!(self.run_net_coex(wireless));
+        let mut handler_task = pin!(self.run_handlers(&persist, handler));
         let mut user_task = pin!(user);
 
         select3(&mut net_task, &mut handler_task, &mut user_task)
@@ -239,148 +212,84 @@ where
             .await
     }
 
-    async fn run_net<W, B>(&'static self, mut wireless: W, mut ble: B) -> Result<(), Error>
-    where
-        W: Wireless<Data = T::Data>,
-        B: Ble,
-    {
-        if T::CONCURRENT {
-            #[allow(non_local_definitions)]
-            impl<M, T, E, B> WirelessTask for MatterStackWirelessTask<'static, M, T, E, B>
-            where
-                M: RawMutex + Send + Sync + 'static,
-                T: WirelessConfig,
-                <T::Data as WirelessData>::NetworkCredentials: Clone + for<'t> FromTLV<'t> + ToTLV,
-                E: Embedding + 'static,
-                B: Ble,
-            {
-                type Data = T::Data;
-
-                async fn run<N, U, C>(
-                    &mut self,
-                    netif: N,
-                    udp: U,
-                    controller: C,
-                ) -> Result<(), Error>
-                where
-                    N: Netif,
-                    U: UdpBind,
-                    C: Controller<Data = Self::Data>,
-                {
-                    info!("Wireless driver started");
-
-                    let stack = &mut self.0;
-                    let ble = &mut self.1;
-
-                    stack
-                        .run_net_with_controller(controller, &netif, &udp, ble)
-                        .await
-                }
-            }
-
-            wireless.run(MatterStackWirelessTask(self, ble)).await
-        } else {
-            loop {
-                let commissioned = self.is_commissioned().await?;
-
-                if !commissioned {
-                    self.matter()
-                        .enable_basic_commissioning(DiscoveryCapabilities::BLE, 0)
-                        .await?; // TODO
-
-                    #[allow(non_local_definitions)]
-                    impl<M, T, E> BleTask for MatterStackWirelessTask<'static, M, T, E, ()>
-                    where
-                        M: RawMutex + Send + Sync + 'static,
-                        T: WirelessConfig,
-                        <T::Data as WirelessData>::NetworkCredentials:
-                            Clone + for<'t> FromTLV<'t> + ToTLV,
-                        E: Embedding + 'static,
-                    {
-                        async fn run<P>(&mut self, peripheral: P) -> Result<(), Error>
-                        where
-                            P: GattPeripheral,
-                        {
-                            let btp = Btp::new(peripheral, &self.0.network.btp_context);
-
-                            info!("BLE driver started");
-
-                            self.0.run_nc_comm_net(&btp).await
-                        }
-                    }
-
-                    ble.run(MatterStackWirelessTask(self, ())).await?;
-                }
-
-                if commissioned {
-                    self.matter().disable_commissioning()?;
-                }
-
-                #[allow(non_local_definitions)]
-                impl<M, T, E> WirelessTask for MatterStackWirelessTask<'static, M, T, E, ()>
-                where
-                    M: RawMutex + Send + Sync + 'static,
-                    T: WirelessConfig,
-                    <T::Data as WirelessData>::NetworkCredentials:
-                        Clone + for<'t> FromTLV<'t> + ToTLV,
-                    E: Embedding + 'static,
-                {
-                    type Data = T::Data;
-
-                    async fn run<N, U, C>(
-                        &mut self,
-                        netif: N,
-                        udp: U,
-                        mut controller: C,
-                    ) -> Result<(), Error>
-                    where
-                        N: Netif,
-                        U: UdpBind,
-                        C: Controller<Data = Self::Data>,
-                    {
-                        info!("Wireless driver started");
-
-                        let mut mgr =
-                            WirelessManager::new(&self.0.network.network_context.controller_proxy);
-
-                        let stack = &mut self.0;
-
-                        let mut net_task = pin!(stack.run_oper_net(
-                            &netif,
-                            &udp,
-                            core::future::pending(),
-                            Option::<(NoNetwork, NoNetwork)>::None
-                        ));
-                        let mut mgr_task = pin!(mgr.run(&stack.network.network_context));
-                        let mut proxy_task = pin!(stack
-                            .network
-                            .network_context
-                            .controller_proxy
-                            .process_with(&mut controller)?);
-
-                        select3(&mut net_task, &mut mgr_task, &mut proxy_task)
-                            .coalesce()
-                            .await
-                    }
-                }
-
-                wireless.run(MatterStackWirelessTask(self, ())).await?;
-            }
-        }
-    }
-
-    async fn run_net_with_controller<C, N, U, B>(
+    /// Run the Matter stack for a wireless network where the BLE and the operational network cannot co-exist.
+    ///
+    /// Parameters:
+    /// - `wireless` - a user-provided `Wireless` + `Gatt` implementation
+    /// - `store` - a `SharedKvBlobStore` implementation wrapping a user-provided `KvBlobStore`
+    /// - `handler` - a user-provided DM handler implementation
+    /// - `user` - a user-provided future that will be polled only when the netif interface is up
+    pub async fn run<W, S, H, U>(
         &'static self,
-        mut controller: C,
-        netif: N,
-        udp: U,
-        mut ble: B,
+        wireless: W,
+        store: &SharedKvBlobStore<'_, S>,
+        handler: H,
+        user: U,
     ) -> Result<(), Error>
     where
-        C: Controller<Data = T::Data>,
-        N: Netif,
-        U: UdpBind,
-        B: Ble,
+        W: Wireless<Data = T::Data> + Gatt,
+        S: KvBlobStore,
+        H: AsyncHandler + AsyncMetadata,
+        U: Future<Output = Result<(), Error>>,
+    {
+        info!("Matter Stack memory: {}B", core::mem::size_of_val(self));
+
+        let persist = self.create_persist(store);
+
+        // TODO persist.load().await?;
+
+        self.matter().reset_transport()?;
+
+        let mut net_task = pin!(self.run_net(wireless));
+        let mut handler_task = pin!(self.run_handlers(&persist, handler));
+        let mut user_task = pin!(user);
+
+        select3(&mut net_task, &mut handler_task, &mut user_task)
+            .coalesce()
+            .await
+    }
+
+    async fn run_net_coex<W>(&'static self, mut wireless: W) -> Result<(), Error>
+    where
+        W: WirelessCoex<Data = T::Data>,
+    {
+        #[allow(non_local_definitions)]
+        impl<M, T, E> WirelessCoexTask for MatterStackWirelessTask<'static, M, T, E>
+        where
+            M: RawMutex + Send + Sync + 'static,
+            T: WirelessConfig,
+            <T::Data as WirelessData>::NetworkCredentials: Clone + for<'t> FromTLV<'t> + ToTLV,
+            E: Embedding + 'static,
+        {
+            type Data = T::Data;
+
+            async fn run<N, U, C, G>(
+                &mut self,
+                netif: N,
+                udp: U,
+                controller: C,
+                gatt: G,
+            ) -> Result<(), Error>
+            where
+                N: Netif,
+                U: UdpBind,
+                C: Controller<Data = Self::Data>,
+                G: GattPeripheral,
+            {
+                info!("Wireless driver started");
+
+                let stack = &mut self.0;
+
+                stack.do_run_net_coex(controller, &netif, &udp, gatt).await
+            }
+        }
+
+        wireless.run(MatterStackWirelessTask(self)).await
+    }
+
+    async fn run_net<W>(&'static self, mut wireless: W) -> Result<(), Error>
+    where
+        W: Wireless<Data = T::Data> + Gatt,
     {
         loop {
             let commissioned = self.is_commissioned().await?;
@@ -390,56 +299,123 @@ where
                     .enable_basic_commissioning(DiscoveryCapabilities::BLE, 0)
                     .await?; // TODO
 
-                struct WithWireless<C, N, U>(C, N, U)
-                where
-                    C: Controller,
-                    N: Netif,
-                    U: UdpBind;
-
-                impl<M, T, E, C, N, U> BleTask for MatterStackWirelessTask<'static, M, T, E, WithWireless<C, N, U>>
+                #[allow(non_local_definitions)]
+                impl<M, T, E> GattTask for MatterStackWirelessTask<'static, M, T, E>
                 where
                     M: RawMutex + Send + Sync + 'static,
                     T: WirelessConfig,
                     <T::Data as WirelessData>::NetworkCredentials:
                         Clone + for<'t> FromTLV<'t> + ToTLV,
                     E: Embedding + 'static,
-                    C: Controller<Data = T::Data>,
-                    N: Netif,
-                    U: UdpBind,
                 {
                     async fn run<P>(&mut self, peripheral: P) -> Result<(), Error>
                     where
                         P: GattPeripheral,
                     {
-                        let stack = &mut self.0;
-                        let wireless = &mut self.1;
-
-                        let btp = Btp::new(peripheral, &stack.network.btp_context);
+                        let btp = Btp::new(peripheral, &self.0.network.btp_context);
 
                         info!("BLE driver started");
 
-                        let mut mgr =
-                            WirelessManager::new(&stack.network.network_context.controller_proxy);
-
-                        let mut net_task = pin!(stack.run_comm_net(&wireless.1, &wireless.2, &btp));
-                        let mut mgr_task = pin!(mgr.run(&stack.network.network_context));
-                        let mut proxy_task = pin!(stack
-                            .network
-                            .network_context
-                            .controller_proxy
-                            .process_with(&mut wireless.0)?);
-
-                        select3(&mut net_task, &mut mgr_task, &mut proxy_task)
-                            .coalesce()
-                            .await
+                        self.0.run_comm_net(&btp).await
                     }
                 }
 
-                ble.run(MatterStackWirelessTask(
-                    self,
-                    WithWireless(&mut controller, &netif, &udp),
-                ))
-                .await?;
+                Gatt::run(&mut wireless, MatterStackWirelessTask(self)).await?;
+            }
+
+            if commissioned {
+                self.matter().disable_commissioning()?;
+            }
+
+            #[allow(non_local_definitions)]
+            impl<M, T, E> WirelessTask for MatterStackWirelessTask<'static, M, T, E>
+            where
+                M: RawMutex + Send + Sync + 'static,
+                T: WirelessConfig,
+                <T::Data as WirelessData>::NetworkCredentials: Clone + for<'t> FromTLV<'t> + ToTLV,
+                E: Embedding + 'static,
+            {
+                type Data = T::Data;
+
+                async fn run<N, U, C>(
+                    &mut self,
+                    netif: N,
+                    udp: U,
+                    mut controller: C,
+                ) -> Result<(), Error>
+                where
+                    N: Netif,
+                    U: UdpBind,
+                    C: Controller<Data = Self::Data>,
+                {
+                    info!("Wireless driver started");
+
+                    let mut mgr =
+                        WirelessManager::new(&self.0.network.network_context.controller_proxy);
+
+                    let stack = &mut self.0;
+
+                    let mut net_task = pin!(stack.run_oper_net(
+                        &netif,
+                        &udp,
+                        core::future::pending(),
+                        Option::<(NoNetwork, NoNetwork)>::None
+                    ));
+                    let mut mgr_task = pin!(mgr.run(&stack.network.network_context));
+                    let mut proxy_task = pin!(stack
+                        .network
+                        .network_context
+                        .controller_proxy
+                        .process_with(&mut controller)?);
+
+                    select3(&mut net_task, &mut mgr_task, &mut proxy_task)
+                        .coalesce()
+                        .await
+                }
+            }
+
+            Wireless::run(&mut wireless, MatterStackWirelessTask(self)).await?;
+        }
+    }
+
+    async fn do_run_net_coex<C, N, U, G>(
+        &'static self,
+        mut controller: C,
+        netif: N,
+        udp: U,
+        gatt: G,
+    ) -> Result<(), Error>
+    where
+        C: Controller<Data = T::Data>,
+        N: Netif,
+        U: UdpBind,
+        G: GattPeripheral,
+    {
+        loop {
+            let commissioned = self.is_commissioned().await?;
+
+            if !commissioned {
+                self.matter()
+                    .enable_basic_commissioning(DiscoveryCapabilities::BLE, 0)
+                    .await?; // TODO
+
+                let btp = Btp::new(&gatt, &self.network.btp_context);
+
+                info!("BLE driver started");
+
+                let mut mgr = WirelessManager::new(&self.network.network_context.controller_proxy);
+
+                let mut net_task = pin!(self.run_comm_net_coex(&netif, &udp, &btp));
+                let mut mgr_task = pin!(mgr.run(&self.network.network_context));
+                let mut proxy_task = pin!(self
+                    .network
+                    .network_context
+                    .controller_proxy
+                    .process_with(&mut controller)?);
+
+                select3(&mut net_task, &mut mgr_task, &mut proxy_task)
+                    .coalesce()
+                    .await?;
             } else {
                 let mut mgr = WirelessManager::new(&self.network.network_context.controller_proxy);
 
@@ -465,7 +441,7 @@ where
         }
     }
 
-    async fn run_comm_net<N, U, B>(
+    async fn run_comm_net_coex<N, U, B>(
         &self,
         mut netif: N,
         mut udp: U,
@@ -495,7 +471,7 @@ where
         select(&mut btp_task, &mut net_task).coalesce().await
     }
 
-    async fn run_nc_comm_net<B>(
+    async fn run_comm_net<B>(
         &'static self,
         btp: &Btp<&'static BtpContext<M>, M, B>,
     ) -> Result<(), Error>
@@ -532,17 +508,16 @@ where
     }
 }
 
-struct MatterStackWirelessTask<'a, M, T, E, B>(&'a MatterStack<'a, WirelessBle<M, T, E>>, B)
+struct MatterStackWirelessTask<'a, M, T, E>(&'a MatterStack<'a, WirelessBle<M, T, E>>)
 where
     M: RawMutex + Send + Sync + 'static,
     T: WirelessConfig,
     <T::Data as WirelessData>::NetworkCredentials: Clone + for<'t> FromTLV<'t> + ToTLV,
     E: Embedding + 'static;
 
-impl<M, C, E> MatterStack<'_, WirelessBle<M, Wifi<C>, E>>
+impl<M, E> MatterStack<'_, WirelessBle<M, Wifi, E>>
 where
     M: RawMutex + Send + Sync + 'static,
-    C: ConcurrencyMode,
     E: Embedding + 'static,
 {
     /// Return a metadata for the root (Endpoint 0) of the Matter Node
@@ -566,16 +541,15 @@ where
                 Dataver::new_rand(self.matter().rand()),
                 &self.network.network_context.controller_proxy,
             ),
-            C::CONCURRENT,
+            false, //C::CONCURRENT, // TODO
             self.matter().rand(),
         )
     }
 }
 
-impl<M, C, E> MatterStack<'_, WirelessBle<M, Thread<C>, E>>
+impl<M, E> MatterStack<'_, WirelessBle<M, Thread, E>>
 where
     M: RawMutex + Send + Sync + 'static,
-    C: ConcurrencyMode,
     E: Embedding + 'static,
 {
     /// Return a metadata for the root (Endpoint 0) of the Matter Node
@@ -601,7 +575,7 @@ where
                 Dataver::new_rand(self.matter().rand()),
                 &self.network.network_context.controller_proxy,
             ),
-            C::CONCURRENT,
+            false, //C::CONCURRENT, // TODO
             self.matter().rand(),
         )
     }
@@ -620,32 +594,3 @@ pub type ThreadRootEndpointHandler<'a, M, T> = RootEndpointHandler<
     comm::WirelessNwCommCluster<'a, MAX_WIRELESS_NETWORKS, M, T>,
     ThreadNwDiagCluster<M, T>,
 >;
-
-#[cfg(all(feature = "os", target_os = "linux"))]
-mod bluez {
-    use rs_matter::error::Error;
-    use rs_matter::transport::network::btp::BuiltinGattPeripheral;
-
-    use crate::wireless::traits::{Ble, BleTask};
-
-    /// A `Ble` trait implementation for the BlueZ GATT peripheral
-    /// which is built-in in `rs-matter`.
-    pub struct BuiltinBle<'a>(Option<&'a str>);
-
-    impl<'a> BuiltinBle<'a> {
-        pub const fn new(adapter: Option<&'a str>) -> Self {
-            Self(adapter)
-        }
-    }
-
-    impl Ble for BuiltinBle<'_> {
-        async fn run<T>(&mut self, mut task: T) -> Result<(), Error>
-        where
-            T: BleTask,
-        {
-            let peripheral = BuiltinGattPeripheral::new(self.0);
-
-            task.run(peripheral).await
-        }
-    }
-}

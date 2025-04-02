@@ -19,6 +19,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use log::{info, trace};
 
+use persist::{KvBlobBuffer, KvBlobStore, MatterPersist, NetworkPersist};
 use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
 use rs_matter::data_model::core::IMBuffer;
 use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata};
@@ -38,12 +39,12 @@ use rs_matter::{BasicCommData, Matter, MATTER_PORT};
 
 use crate::netif::{Netif, NetifConf};
 use crate::network::Network;
-use crate::persist::Persist;
+use crate::persist::SharedKvBlobStore;
 
 pub use eth::*;
 pub use wireless::{
-    ThreadMatterStack, ThreadNCMatterStack, ThreadRootEndpointHandler, WifiMatterStack,
-    WifiNCMatterStack, WifiRootEndpointHandler, WirelessBle,
+    ThreadMatterStack, ThreadRootEndpointHandler, WifiMatterStack, WifiRootEndpointHandler,
+    WirelessBle,
 };
 
 #[cfg(feature = "std")]
@@ -117,6 +118,7 @@ where
     matter: Matter<'a>,
     buffers: PooledBuffers<MAX_IM_BUFFERS, NoopRawMutex, IMBuffer>,
     subscriptions: Subscriptions<MAX_SUBSCRIPTIONS>,
+    store_buf: PooledBuffers<1, NoopRawMutex, KvBlobBuffer>,
     #[allow(unused)]
     network: N,
     #[allow(unused)]
@@ -170,6 +172,7 @@ where
             ),
             buffers: PooledBuffers::new(0),
             subscriptions: Subscriptions::new(),
+            store_buf: PooledBuffers::new(0),
             network: N::INIT,
             mdns,
             netif_conf: Signal::new(None),
@@ -215,10 +218,32 @@ where
             ),
             buffers <- PooledBuffers::init(0),
             subscriptions <- Subscriptions::init(),
+            store_buf <- PooledBuffers::init(0),
             network <- N::init(),
             mdns,
             netif_conf: Signal::new(None),
         })
+    }
+
+    /// Create a new `SharedKvBlobStore` instance wrapping the
+    /// provided `KvBlobStore` implementation and the internal store buffer
+    /// available in the `MatterStack` instance.
+    pub fn create_shared_store<S>(&self, store: S) -> SharedKvBlobStore<'_, S>
+    where
+        S: KvBlobStore,
+    {
+        SharedKvBlobStore::new(store, &self.store_buf)
+    }
+
+    /// Create a new `MatterPersist` instance for the Matter stack.
+    fn create_persist<'t, S>(
+        &'t self,
+        store: &'t SharedKvBlobStore<'t, S>,
+    ) -> MatterPersist<'t, S, N::PersistContext<'t>>
+    where
+        S: KvBlobStore,
+    {
+        MatterPersist::new(store, self.matter(), self.network().persist_context())
     }
 
     /// A utility method to replace the initial mDNS implementation with another one.
@@ -249,6 +274,10 @@ where
     /// Get a reference to the `Matter` instance.
     pub const fn matter(&self) -> &Matter<'a> {
         &self.matter
+    }
+
+    pub const fn store_buf(&self) -> &PooledBuffers<1, NoopRawMutex, KvBlobBuffer> {
+        &self.store_buf
     }
 
     /// Get a reference to the `Network` instance.
@@ -449,10 +478,15 @@ where
     /// user-provided transport might not be IP-based (i.e. BLE).
     ///
     /// It also has no facilities for monitoring the transport network state.
-    async fn run_handlers<P, H>(&self, persist: P, handler: H) -> Result<(), Error>
+    async fn run_handlers<S, C, H>(
+        &self,
+        persist: &MatterPersist<'_, S, C>,
+        handler: H,
+    ) -> Result<(), Error>
     where
         H: AsyncHandler + AsyncMetadata,
-        P: Persist,
+        S: KvBlobStore,
+        C: NetworkPersist,
     {
         // TODO
         // Reset the Matter transport buffers and all sessions first
@@ -464,9 +498,10 @@ where
         select(&mut psm, &mut respond).coalesce().await
     }
 
-    async fn run_psm<P>(&self, mut persist: P) -> Result<(), Error>
+    async fn run_psm<S, C>(&self, persist: &MatterPersist<'_, S, C>) -> Result<(), Error>
     where
-        P: Persist,
+        S: KvBlobStore,
+        C: NetworkPersist,
     {
         if false {
             persist.run().await

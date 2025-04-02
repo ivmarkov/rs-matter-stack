@@ -26,7 +26,7 @@ use rs_matter_stack::matter::error::Error;
 use rs_matter_stack::matter::utils::init::InitMaybeUninit;
 use rs_matter_stack::matter::utils::select::Coalesce;
 use rs_matter_stack::netif::UnixNetif;
-use rs_matter_stack::persist::{new_kv, DirKvBlobStore, KvBlobBuf};
+use rs_matter_stack::persist::DirKvBlobStore;
 use rs_matter_stack::test_device::{TEST_BASIC_COMM_DATA, TEST_DEV_ATT, TEST_PID, TEST_VID};
 use rs_matter_stack::EthMatterStack;
 
@@ -90,13 +90,14 @@ fn main() -> Result<(), Error> {
     // Run the Matter stack with our handler
     // Using `pin!` is completely optional, but saves some memory due to `rustc`
     // not being very intelligent w.r.t. stack usage in async functions
+    let store = stack.create_shared_store(DirKvBlobStore::new_default());
     let mut matter = pin!(stack.run(
         // Will try to find a default network interface
         UnixNetif::default(),
         // The Matter stack needs UDP sockets to communicate with other Matter devices
         edge_nal_std::Stack::new(),
         // Will persist in `<tmp-dir>/rs-matter`
-        new_kv(DirKvBlobStore::new_default(), stack),
+        &store,
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
         // No user future to run
@@ -130,7 +131,7 @@ fn main() -> Result<(), Error> {
 
 /// The Matter stack is allocated statically to avoid
 /// program stack blowups.
-static MATTER_STACK: StaticCell<EthMatterStack<KvBlobBuf<()>>> = StaticCell::new();
+static MATTER_STACK: StaticCell<EthMatterStack> = StaticCell::new();
 
 /// Endpoint 0 (the root endpoint) always runs
 /// the hidden Matter system clusters, so we pick ID=1
@@ -140,7 +141,7 @@ const LIGHT_ENDPOINT_ID: u16 = 1;
 const NODE: Node = Node {
     id: 0,
     endpoints: &[
-        EthMatterStack::<KvBlobBuf<()>>::root_metadata(),
+        EthMatterStack::<()>::root_metadata(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
             device_types: &[DEV_TYPE_ON_OFF_LIGHT],

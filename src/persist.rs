@@ -4,171 +4,49 @@ use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use rs_matter::error::Error;
-use rs_matter::utils::init::{init, Init};
-use rs_matter::utils::storage::pooled::{BufferAccess, PooledBuffers};
+use rs_matter::utils::storage::pooled::{BufferAccess, PooledBuffer, PooledBuffers};
+use rs_matter::utils::sync::{IfMutex, IfMutexGuard};
 use rs_matter::Matter;
 
-use crate::network::{Embedding, Network};
 use crate::private::Sealed;
-use crate::MatterStack;
 
 #[cfg(feature = "std")]
 pub use file::DirKvBlobStore;
 
-/// A perist API that needs to be implemented by the network impl which is used in the Matter stack.
-///
-/// The trait is sealed and has only two implementations:
-/// - `()` - which is used with the `Eth` network
-/// - `&NetworkContext` - which is used with the `WirelessBle` network.
-pub trait NetworkPersist: Sealed {
-    const KEY: Key;
-
-    /// Reset all networks, removing all stored data from the memory
-    fn reset(&mut self) -> Result<(), Error>;
-
-    /// Load the networks from the provided data BLOB
-    fn load(&mut self, data: &[u8]) -> Result<(), Error>;
-
-    /// Save the networks as BLOB using the provided data buffer
-    ///
-    /// Return the length of the data written in the provided buffer.
-    fn store(&mut self, buf: &mut [u8]) -> Result<usize, Error>;
-
-    /// Check if the networks have changed.
-    ///
-    /// This method should return `Ok(true)` if the networks have changed since the last call to `changed`.
-    fn changed(&mut self) -> Result<bool, Error>;
-
-    /// Wait until the networks have changed.
-    ///
-    /// This method might return even if the networks have not changed,
-    /// so the ultimate litmus test whether the networks did indeed change is trying to call
-    /// `store` and then inspecting if it returned something.
-    async fn wait_state_changed(&mut self);
-}
-
-/// A no-op implementation of the `NetworksPersist` trait.
-///
-/// Used when the Matter stack is configured for Ethernet, as in that case
-/// there is no network state that needs to be saved
-impl NetworkPersist for () {
-    const KEY: Key = Key::EthNetworks; // Does not matter really as Ethernet networks do not have a persistence story
-
-    fn reset(&mut self) -> Result<(), Error> {
-        Ok(())
-    }
-
-    fn load(&mut self, _data: &[u8]) -> Result<(), Error> {
-        Ok(())
-    }
-
-    fn store(&mut self, _buf: &mut [u8]) -> Result<usize, Error> {
-        Ok(0)
-    }
-
-    fn changed(&mut self) -> Result<bool, Error> {
-        Ok(false)
-    }
-
-    async fn wait_state_changed(&mut self) {}
-}
-
-/// A persistent storage manager for the Matter stack.
-pub trait Persist {
-    /// Reset the persist instance, removing all stored data from the non-volatile storage.
-    async fn reset(&mut self) -> Result<(), Error>;
-
-    /// Does an initial load of the Matter stack from the non-volatile storage.
-    async fn load(&mut self) -> Result<(), Error>;
-
-    /// Run the persist instance, listening for changes in the Matter stack's state
-    /// and persisting these, as well as the network state, to the non-volatile storage.
-    async fn run(&mut self) -> Result<(), Error>;
-}
-
-impl<T> Persist for &mut T
-where
-    T: Persist,
-{
-    async fn reset(&mut self) -> Result<(), Error> {
-        T::reset(self).await
-    }
-
-    async fn load(&mut self) -> Result<(), Error> {
-        T::load(self).await
-    }
-
-    async fn run(&mut self) -> Result<(), Error> {
-        T::run(self).await
-    }
-}
-
-/// As the name suggests, this is a dummy implementation of the `Persist` trait
-/// that does not persist anything.
-#[derive(Debug)]
-pub struct DummyPersist;
-
-impl Persist for DummyPersist {
-    async fn reset(&mut self) -> Result<(), Error> {
-        Ok(())
-    }
-
-    async fn load(&mut self) -> Result<(), Error> {
-        Ok(())
-    }
-
-    async fn run(&mut self) -> Result<(), Error> {
-        Ok(())
-    }
-}
-
-impl Default for DummyPersist {
-    fn default() -> Self {
-        Self
-    }
-}
-
-/// A persistent storage implementation that relies on a BLOB key-value storage
-/// represented by the `KvBlobStore` trait.
-pub struct KvPersist<'a, T, C> {
-    store: T,
-    buf: &'a PooledBuffers<1, NoopRawMutex, KvBlobBuffer>,
+/// A persister for Matter that relies on a BLOB key-value storage
+/// represented by the `KvBlobStore`/`SharedKvBlobStore` traits.
+pub struct MatterPersist<'a, S, C> {
+    store: &'a SharedKvBlobStore<'a, S>,
     matter: &'a Matter<'a>,
     networks: C,
 }
 
-impl<'a, T, C> KvPersist<'a, T, C>
+impl<'a, S, C> MatterPersist<'a, S, C>
 where
-    T: KvBlobStore,
+    S: KvBlobStore,
     C: NetworkPersist,
 {
-    /// Create a new `KvPersist` instance.
-    pub fn wrap(
-        store: T,
-        buf: &'a PooledBuffers<1, NoopRawMutex, KvBlobBuffer>,
-        matter: &'a Matter<'a>,
-        networks: C,
-    ) -> Self {
+    /// Create a new `MatterPersist` instance.
+    pub fn new(store: &'a SharedKvBlobStore<'a, S>, matter: &'a Matter<'a>, networks: C) -> Self {
         Self {
             store,
-            buf,
             matter,
             networks,
         }
     }
 
     /// Reset the persist instance, removing all stored data from the non-volatile storage
-    /// as well as removing all ACLs, fabrics and Wifi networks from the MAtter stack.
-    pub async fn reset(&mut self) -> Result<(), Error> {
-        // TODO: Reset fabrics
+    /// as well as removing all ACLs, fabrics and Wifi networks from the Matter stack.
+    pub async fn reset(&self) -> Result<(), Error> {
+        let (mut kv, mut buf) = self.store.get().await;
 
-        let mut buf = self.buf.get().await.unwrap();
-        buf.resize_default(KV_BLOB_BUF_SIZE).unwrap();
-
-        self.store.remove(Key::Fabrics, &mut buf).await?;
-        self.store.remove(Key::EthNetworks, &mut buf).await?;
-        self.store.remove(Key::WifiNetworks, &mut buf).await?;
-        self.store.remove(Key::ThreadNetworks, &mut buf).await?;
+        kv.remove(MatterStackKey::Fabrics as _, &mut buf).await?;
+        kv.remove(MatterStackKey::EthNetworks as _, &mut buf)
+            .await?;
+        kv.remove(MatterStackKey::WifiNetworks as _, &mut buf)
+            .await?;
+        kv.remove(MatterStackKey::ThreadNetworks as _, &mut buf)
+            .await?;
 
         self.networks.reset()?;
 
@@ -176,164 +54,292 @@ where
     }
 
     /// Load the Matter stack from the non-volatile storage.
-    pub async fn load(&mut self) -> Result<(), Error> {
-        let mut buf = self.buf.get().await.unwrap();
-        buf.resize_default(KV_BLOB_BUF_SIZE).unwrap();
+    pub async fn load(&self) -> Result<(), Error> {
+        let (mut kv, mut buf) = self.store.get().await;
 
-        self.store
-            .load(Key::Fabrics, &mut buf, |data| {
-                if let Some(data) = data {
-                    self.matter.load_fabrics(data)?;
-                }
+        kv.load(MatterStackKey::Fabrics as _, &mut buf, |data| {
+            if let Some(data) = data {
+                self.matter.load_fabrics(data)?;
+            }
 
-                Ok(())
-            })
-            .await?;
+            Ok(())
+        })
+        .await?;
 
-        self.store
-            .load(C::KEY, &mut buf, |data| {
-                if let Some(data) = data {
-                    self.networks.load(data)?;
-                }
+        kv.load(C::KEY as _, &mut buf, |data| {
+            if let Some(data) = data {
+                self.networks.load(data)?;
+            }
 
-                Ok(())
-            })
-            .await?;
+            Ok(())
+        })
+        .await?;
 
         Ok(())
     }
 
-    /// Run the persist instance, listening for changes in the Matter stack's state.
-    pub async fn run(&mut self) -> Result<(), Error> {
-        loop {
-            let wait_fabrics = self.matter.wait_fabrics_changed();
-            let wait_wifi = self.networks.wait_state_changed();
+    /// Return `true` if the Matter stack has changed since the last call to `store`.
+    pub fn changed(&self) -> bool {
+        self.matter.fabrics_changed() || self.networks.changed()
+    }
 
-            select(wait_fabrics, wait_wifi).await;
-
-            let mut buf = self.buf.get().await.unwrap();
-            buf.resize_default(KV_BLOB_BUF_SIZE).unwrap();
+    /// Store the Matter stack to the non-volatile storage, if it has changed.
+    ///
+    /// Return `true` if the Matter stack was changed and therefore has been stored.
+    pub async fn save(&self) -> Result<bool, Error> {
+        if self.changed() {
+            let (mut kv, mut buf) = self.store.get().await;
 
             if self.matter.fabrics_changed() {
-                self.store
-                    .store(Key::Fabrics, &mut buf, |buf| {
-                        self.matter
-                            .store_fabrics(buf)
-                            .map(|data| data.map(|data| data.len()).unwrap_or(0))
-                    })
+                kv.store(MatterStackKey::Fabrics as _, &mut buf, |buf| {
+                    self.matter
+                        .store_fabrics(buf)
+                        .map(|data| data.map(|data| data.len()).unwrap_or(0))
+                })
+                .await?;
+            }
+
+            if self.networks.changed() {
+                kv.store(C::KEY as _, &mut buf, |buf| self.networks.store(buf))
                     .await?;
             }
 
-            self.store
-                .store(C::KEY, &mut buf, |buf| self.networks.store(buf))
-                .await?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Run the persist instance, listening for changes in the Matter stack's state.
+    pub async fn run(&self) -> Result<(), Error> {
+        loop {
+            let wait_fabrics = self.matter.wait_fabrics_changed();
+            let wait_networks = self.networks.wait_state_changed();
+
+            select(wait_fabrics, wait_networks).await;
+
+            self.save().await?;
         }
     }
 }
 
-impl<T, C> Persist for KvPersist<'_, T, C>
-where
-    T: KvBlobStore,
-    C: NetworkPersist,
-{
-    async fn reset(&mut self) -> Result<(), Error> {
-        KvPersist::reset(self).await
-    }
+/// A perist API that needs to be implemented by the network impl which is used in the Matter stack.
+///
+/// The trait is sealed and has only two implementations:
+/// - `()` - which is used with the `Eth` network
+/// - `&NetworkContext` - which is used with the `WirelessBle` network.
+pub trait NetworkPersist: Sealed {
+    const KEY: MatterStackKey;
 
-    async fn load(&mut self) -> Result<(), Error> {
-        KvPersist::load(self).await
-    }
+    /// Reset all networks, removing all stored data from the memory
+    fn reset(&self) -> Result<(), Error>;
 
-    async fn run(&mut self) -> Result<(), Error> {
-        KvPersist::run(self).await
-    }
+    /// Load the networks from the provided data BLOB
+    fn load(&self, data: &[u8]) -> Result<(), Error>;
+
+    /// Save the networks as BLOB using the provided data buffer
+    ///
+    /// Return the length of the data written in the provided buffer.
+    fn store(&self, buf: &mut [u8]) -> Result<usize, Error>;
+
+    /// Check if the networks have changed.
+    ///
+    /// This method should return `Ok(true)` if the networks have changed since the last call to `changed`.
+    fn changed(&self) -> bool;
+
+    /// Wait until the networks have changed.
+    ///
+    /// This method might return even if the networks have not changed,
+    /// so the ultimate litmus test whether the networks did indeed change is trying to call
+    /// `store` and then inspecting if it returned something.
+    async fn wait_state_changed(&self);
 }
 
-/// The keys the `KvBlobStore` trait uses to store the BLOBs.
+/// A no-op implementation of the `NetworksPersist` trait.
+///
+/// Used when the Matter stack is configured for Ethernet, as in that case
+/// there is no network state that needs to be saved
+impl NetworkPersist for () {
+    const KEY: MatterStackKey = MatterStackKey::EthNetworks; // Does not matter really as Ethernet networks do not have a persistence story
+
+    fn reset(&self) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn load(&self, _data: &[u8]) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn store(&self, _buf: &mut [u8]) -> Result<usize, Error> {
+        Ok(0)
+    }
+
+    fn changed(&self) -> bool {
+        false
+    }
+
+    async fn wait_state_changed(&self) {}
+}
+
+/// The first key available for the vendor-specific data.
+pub const VENDOR_KEYS_START: u16 = 0x1000;
+
+/// The keys currently used by the `rs-matter-stack`.
+///
+/// All keys with values up to 0xfff are reserved for `rs-matter-stack` use.
+/// Keys >= 0x1000 are available for downstream crates.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[repr(u8)]
-pub enum Key {
+#[repr(u16)]
+pub enum MatterStackKey {
     Fabrics = 0,
     EthNetworks = 1,
     WifiNetworks = 2,
     ThreadNetworks = 3,
 }
 
-impl From<Key> for u8 {
-    fn from(key: Key) -> u8 {
-        key as u8
-    }
-}
+impl TryFrom<u16> for MatterStackKey {
+    type Error = ();
 
-impl AsRef<str> for Key {
-    fn as_ref(&self) -> &str {
-        match self {
-            Key::Fabrics => "fabrics",
-            Key::EthNetworks => "eth-net",
-            Key::WifiNetworks => "wifi-net",
-            Key::ThreadNetworks => "thread-net",
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(MatterStackKey::Fabrics),
+            1 => Ok(MatterStackKey::EthNetworks),
+            2 => Ok(MatterStackKey::WifiNetworks),
+            3 => Ok(MatterStackKey::ThreadNetworks),
+            _ => Err(()),
         }
     }
 }
 
-impl Display for Key {
+impl Display for MatterStackKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_ref())
+        let s = match self {
+            MatterStackKey::Fabrics => "fabrics",
+            MatterStackKey::EthNetworks => "eth-net",
+            MatterStackKey::WifiNetworks => "wifi-net",
+            MatterStackKey::ThreadNetworks => "thread-net",
+        };
+
+        write!(f, "{s}")
     }
 }
 
 /// A trait representing a key-value BLOB storage.
 pub trait KvBlobStore {
-    async fn load<F>(&mut self, key: Key, buf: &mut [u8], cb: F) -> Result<(), Error>
+    /// Load a BLOB with the specified key from the storage.
+    ///
+    /// # Arguments
+    /// - `key` - the key of the BLOB
+    /// - `buf` - a buffer that the `KvBlobStore` implementation might use for its own purposes
+    /// - `cb` - a callback that will be called with the loaded data is available
+    ///   or with `None` if the BLOB does not exist.
+    async fn load<F>(&mut self, key: u16, buf: &mut [u8], cb: F) -> Result<(), Error>
     where
         F: FnOnce(Option<&[u8]>) -> Result<(), Error>;
 
-    async fn store<F>(&mut self, key: Key, buf: &mut [u8], cb: F) -> Result<(), Error>
+    /// Store a BLOB with the specified key in the storage.
+    ///
+    /// # Arguments
+    /// - `key` - the key of the BLOB
+    /// - `buf` - a buffer that the `KvBlobStore` implementation might use for its own purposes
+    /// - `cb` - a callback that will be called with a buffer that the implementation
+    ///   should fill with the data to be stored.
+    async fn store<F>(&mut self, key: u16, buf: &mut [u8], cb: F) -> Result<(), Error>
     where
         F: FnOnce(&mut [u8]) -> Result<usize, Error>;
 
-    async fn remove(&mut self, key: Key, buf: &mut [u8]) -> Result<(), Error>;
+    /// Remove a BLOB with the specified key from the storage.
+    ///
+    /// # Arguments
+    /// - `key` - the key of the BLOB
+    /// - `buf` - a buffer that the `KvBlobStore` implementation might use for its own purposes
+    async fn remove(&mut self, key: u16, buf: &mut [u8]) -> Result<(), Error>;
 }
 
 impl<T> KvBlobStore for &mut T
 where
     T: KvBlobStore,
 {
-    async fn load<F>(&mut self, key: Key, buf: &mut [u8], cb: F) -> Result<(), Error>
+    async fn load<F>(&mut self, key: u16, buf: &mut [u8], cb: F) -> Result<(), Error>
     where
         F: FnOnce(Option<&[u8]>) -> Result<(), Error>,
     {
         T::load(self, key, buf, cb).await
     }
 
-    async fn store<F>(&mut self, key: Key, buf: &mut [u8], cb: F) -> Result<(), Error>
+    async fn store<F>(&mut self, key: u16, buf: &mut [u8], cb: F) -> Result<(), Error>
     where
         F: FnOnce(&mut [u8]) -> Result<usize, Error>,
     {
         T::store(self, key, buf, cb).await
     }
 
-    async fn remove(&mut self, key: Key, buf: &mut [u8]) -> Result<(), Error> {
+    async fn remove(&mut self, key: u16, buf: &mut [u8]) -> Result<(), Error> {
         T::remove(self, key, buf).await
     }
 }
 
-/// Create a new `KvPersist` instance for a Matter stack.
-pub fn new_kv<'a, T, N, E>(
-    store: T,
-    stack: &'a MatterStack<N>,
-) -> KvPersist<'a, T, N::PersistContext<'a>>
+/// A noop implementation of the `KvBlobStore` trait.
+pub struct DummyKvBlobStore;
+
+impl KvBlobStore for DummyKvBlobStore {
+    async fn load<F>(&mut self, _key: u16, _buf: &mut [u8], _cb: F) -> Result<(), Error>
+    where
+        F: FnOnce(Option<&[u8]>) -> Result<(), Error>,
+    {
+        Ok(())
+    }
+
+    async fn store<F>(&mut self, _key: u16, _buf: &mut [u8], _cb: F) -> Result<(), Error>
+    where
+        F: FnOnce(&mut [u8]) -> Result<usize, Error>,
+    {
+        Ok(())
+    }
+
+    async fn remove(&mut self, _key: u16, _buf: &mut [u8]) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+/// A shared wrapper around a `KvBlobStore` instance.
+pub struct SharedKvBlobStore<'a, S> {
+    store: IfMutex<NoopRawMutex, S>,
+    buf: &'a PooledBuffers<1, NoopRawMutex, KvBlobBuffer>,
+}
+
+impl<'a, S> SharedKvBlobStore<'a, S>
 where
-    T: KvBlobStore,
-    N: Network<Embedding = KvBlobBuf<E>>,
-    E: Embedding + 'static,
+    S: KvBlobStore,
 {
-    KvPersist::wrap(
-        store,
-        stack.network().embedding().buf(),
-        stack.matter(),
-        stack.network().persist_context(),
-    )
+    /// Create a new `SharedKvBlobStore` instance.
+    ///
+    /// # Arguments
+    /// - `store` - the wrapped `KvBlobStore` instance
+    /// - `buf` - the wrapped buffer
+    pub const fn new(store: S, buf: &'a PooledBuffers<1, NoopRawMutex, KvBlobBuffer>) -> Self {
+        Self {
+            store: IfMutex::new(store),
+            buf,
+        }
+    }
+
+    /// Get the wrapped `KvBlobStore` instance and the wrapped buffer.
+    ///
+    /// If necessary, awaits the buffer to be available.
+    pub async fn get(
+        &self,
+    ) -> (
+        IfMutexGuard<'_, NoopRawMutex, S>,
+        PooledBuffer<'_, 1, NoopRawMutex, KvBlobBuffer>,
+    ) {
+        let store = self.store.lock().await;
+        let mut buf = self.buf.get().await.unwrap();
+
+        buf.resize_default(KV_BLOB_BUF_SIZE).unwrap();
+
+        (store, buf)
+    }
 }
 
 #[cfg(feature = "std")]
@@ -344,18 +350,13 @@ mod file {
 
     use rs_matter::error::Error;
 
-    use super::{Key, KvBlobStore};
+    use super::KvBlobStore;
 
     extern crate std;
 
     /// An implementation of the `KvBlobStore` trait that stores the BLOBs in a directory.
     ///
     /// The BLOBs are stored in files named after the keys in the specified directory.
-    ///
-    /// The implementation has its own public API, so that the user is able to load and store
-    /// additional BLOBs, unrelated to the Matter-specific `KvBlobStore`.
-    ///
-    /// NOTE: The keys should be valid file names!
     #[derive(Debug, Clone)]
     pub struct DirKvBlobStore(std::path::PathBuf);
 
@@ -372,11 +373,8 @@ mod file {
         }
 
         /// Load a BLOB with the specified key from the directory.
-        pub fn load<'a, K>(&self, key: K, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error>
-        where
-            K: AsRef<str>,
-        {
-            let path = self.key_path(&key);
+        fn load<'a>(&self, key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
+            let path = self.key_path(key);
 
             match std::fs::File::open(path) {
                 Ok(mut file) => {
@@ -398,7 +396,7 @@ mod file {
 
                     let data = &buf[..offset];
 
-                    debug!("Key {}: loaded {}B ({:?})", key.as_ref(), data.len(), data);
+                    debug!("Key {key}: loaded {}B ({:?})", data.len(), data);
 
                     Ok(Some(data))
                 }
@@ -407,11 +405,8 @@ mod file {
         }
 
         /// Store a BLOB with the specified key in the directory.
-        pub fn store<K>(&self, key: K, data: &[u8]) -> Result<(), Error>
-        where
-            K: AsRef<str>,
-        {
-            let path = self.key_path(&key);
+        pub fn store(&self, key: u16, data: &[u8]) -> Result<(), Error> {
+            let path = self.key_path(key);
 
             std::fs::create_dir_all(path.parent().unwrap())?;
 
@@ -419,31 +414,25 @@ mod file {
 
             file.write_all(data)?;
 
-            debug!("Key {}: stored {}B ({:?})", key.as_ref(), data.len(), data);
+            debug!("Key {key}: stored {}B ({:?})", data.len(), data);
 
             Ok(())
         }
 
         /// Remove a BLOB with the specified key from the directory.
         /// If the BLOB does not exist, this method does nothing.
-        pub fn remove<K>(&self, key: K) -> Result<(), Error>
-        where
-            K: AsRef<str>,
-        {
-            let path = self.key_path(&key);
+        pub fn remove(&self, key: u16) -> Result<(), Error> {
+            let path = self.key_path(key);
 
             if std::fs::remove_file(path).is_ok() {
-                debug!("Key {}: removed", key.as_ref());
+                debug!("Key {key}: removed");
             }
 
             Ok(())
         }
 
-        fn key_path<K>(&self, key: &K) -> std::path::PathBuf
-        where
-            K: AsRef<str>,
-        {
-            self.0.join(key.as_ref())
+        fn key_path(&self, key: u16) -> std::path::PathBuf {
+            self.0.join(format!("k_{key:04x}"))
         }
     }
 
@@ -454,7 +443,7 @@ mod file {
     }
 
     impl KvBlobStore for DirKvBlobStore {
-        async fn load<F>(&mut self, key: Key, buf: &mut [u8], cb: F) -> Result<(), Error>
+        async fn load<F>(&mut self, key: u16, buf: &mut [u8], cb: F) -> Result<(), Error>
         where
             F: FnOnce(Option<&[u8]>) -> Result<(), Error>,
         {
@@ -463,7 +452,7 @@ mod file {
             cb(data)
         }
 
-        async fn store<F>(&mut self, key: Key, buf: &mut [u8], cb: F) -> Result<(), Error>
+        async fn store<F>(&mut self, key: u16, buf: &mut [u8], cb: F) -> Result<(), Error>
         where
             F: FnOnce(&mut [u8]) -> Result<usize, Error>,
         {
@@ -472,7 +461,7 @@ mod file {
             DirKvBlobStore::store(self, key, &buf[..data_len])
         }
 
-        async fn remove(&mut self, key: Key, _buf: &mut [u8]) -> Result<(), Error> {
+        async fn remove(&mut self, key: u16, _buf: &mut [u8]) -> Result<(), Error> {
             DirKvBlobStore::remove(self, key)
         }
     }
@@ -482,61 +471,3 @@ const KV_BLOB_BUF_SIZE: usize = 4096;
 
 /// A buffer for the `KvBlobStore` trait.
 pub type KvBlobBuffer = heapless::Vec<u8, KV_BLOB_BUF_SIZE>;
-
-/// An embedding of the buffer necessary for the `KvBlobStore` trait.
-/// Allows the memory of this buffer to be statically allocated and cost-initialized.
-///
-/// Usage:
-/// ```no_run
-/// MatterStack<WifiBle<M, KvBlobBuf<E>>>::new();
-/// ```
-/// or:
-/// ```no_run
-/// MatterStack<Eth<KvBlobBuf<E>>>::new();
-/// ```
-///
-/// ... where `E` can be a next-level, user-supplied embedding or just `()` if the user does not need to embed anything.
-pub struct KvBlobBuf<E = ()> {
-    buf: PooledBuffers<1, NoopRawMutex, KvBlobBuffer>,
-    embedding: E,
-}
-
-impl<E> KvBlobBuf<E>
-where
-    E: Embedding,
-{
-    #[allow(clippy::large_stack_frames)]
-    #[inline(always)]
-    const fn new() -> Self {
-        Self {
-            buf: PooledBuffers::new(0),
-            embedding: E::INIT,
-        }
-    }
-
-    fn init() -> impl Init<Self> {
-        init!(Self {
-            buf <- PooledBuffers::init(0),
-            embedding <- E::init(),
-        })
-    }
-
-    pub fn buf(&self) -> &PooledBuffers<1, NoopRawMutex, KvBlobBuffer> {
-        &self.buf
-    }
-
-    pub fn embedding(&self) -> &E {
-        &self.embedding
-    }
-}
-
-impl<E> Embedding for KvBlobBuf<E>
-where
-    E: Embedding,
-{
-    const INIT: Self = Self::new();
-
-    fn init() -> impl Init<Self> {
-        KvBlobBuf::init()
-    }
-}
