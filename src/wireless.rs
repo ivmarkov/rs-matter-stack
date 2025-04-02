@@ -197,6 +197,11 @@ where
     {
         info!("Matter Stack memory: {}B", core::mem::size_of_val(self));
 
+        self.network
+            .network_context
+            .concurrent_connection
+            .lock(|s| s.set(true));
+
         let persist = self.create_persist(store);
 
         // TODO persist.load().await?;
@@ -233,6 +238,11 @@ where
         U: Future<Output = Result<(), Error>>,
     {
         info!("Matter Stack memory: {}B", core::mem::size_of_val(self));
+
+        self.network
+            .network_context
+            .concurrent_connection
+            .lock(|s| s.set(false));
 
         let persist = self.create_persist(store);
 
@@ -541,7 +551,10 @@ where
                 Dataver::new_rand(self.matter().rand()),
                 &self.network.network_context.controller_proxy,
             ),
-            false, //C::CONCURRENT, // TODO
+            self.network
+                .network_context
+                .concurrent_connection
+                .lock(|s| s.get()), // TODO
             self.matter().rand(),
         )
     }
@@ -575,7 +588,10 @@ where
                 Dataver::new_rand(self.matter().rand()),
                 &self.network.network_context.controller_proxy,
             ),
-            false, //C::CONCURRENT, // TODO
+            self.network
+                .network_context
+                .concurrent_connection
+                .lock(|s| s.get()), // TODO
             self.matter().rand(),
         )
     }

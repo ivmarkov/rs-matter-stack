@@ -1,5 +1,7 @@
 //! The network state store for the wireless module.
 
+use core::cell::Cell;
+
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use log::info;
@@ -164,6 +166,7 @@ where
     pub(crate) state: Mutex<M, RefCell<NetworkState<N, T::NetworkCredentials>>>,
     pub(crate) state_changed: Notification<M>,
     pub(crate) controller_proxy: ControllerProxy<M, T>,
+    pub(crate) concurrent_connection: Mutex<M, Cell<bool>>,
     pub(crate) network_connect_requested: Notification<M>,
 }
 
@@ -179,6 +182,7 @@ where
             state: Mutex::new(RefCell::new(NetworkState::new())),
             state_changed: Notification::new(),
             controller_proxy: ControllerProxy::new(),
+            concurrent_connection: Mutex::new(Cell::new(false)),
             network_connect_requested: Notification::new(),
         }
     }
@@ -189,6 +193,7 @@ where
             state <- Mutex::init(RefCell::init(NetworkState::init())),
             state_changed: Notification::new(),
             controller_proxy <- ControllerProxy::init(),
+            concurrent_connection <- Mutex::init(Cell::new(false)),
             network_connect_requested: Notification::new(),
         })
     }
