@@ -67,6 +67,76 @@ where
 
 pub type EthMatterStack<'a, E = ()> = MatterStack<'a, Eth<E>>;
 
+/// A trait representing a task that needs access to the operational Ethernet interface
+/// (Netif and UDP stack) to perform its work.
+pub trait EthernetTask {
+    /// Run the task with the given network interface and UDP stack
+    async fn run<N, U>(&mut self, netif: N, udp: U) -> Result<(), Error>
+    where
+        N: Netif,
+        U: UdpBind;
+}
+
+impl<T> EthernetTask for &mut T
+where
+    T: EthernetTask,
+{
+    async fn run<N, U>(&mut self, netif: N, udp: U) -> Result<(), Error>
+    where
+        N: Netif,
+        U: UdpBind,
+    {
+        (*self).run(netif, udp).await
+    }
+}
+
+/// A trait for running a task within a context where the ethernet interface is initialized and operable
+pub trait Ethernet {
+    /// Setup Ethernet and run the given task
+    async fn run<T>(&mut self, task: T) -> Result<(), Error>
+    where
+        T: EthernetTask;
+}
+
+impl<T> Ethernet for &mut T
+where
+    T: Ethernet,
+{
+    async fn run<A>(&mut self, task: A) -> Result<(), Error>
+    where
+        A: EthernetTask,
+    {
+        (*self).run(task).await
+    }
+}
+
+/// A utility type for running an ethernet task with a pre-existing ethernet interface
+/// rather than bringing up / tearing down the ethernet interface for the task.
+pub struct PreexistingEthernet<N, U> {
+    netif: N,
+    udp: U,
+}
+
+impl<N, U> PreexistingEthernet<N, U> {
+    /// Create a new `PreexistingEthernet` instance with the given network interface and UDP stack.
+    pub const fn new(netif: N, udp: U) -> Self {
+        Self { netif, udp }
+    }
+}
+
+impl<N, U> Ethernet for PreexistingEthernet<N, U>
+where
+    N: Netif,
+    U: UdpBind,
+{
+    async fn run<T>(&mut self, mut task: T) -> Result<(), Error>
+    where
+        T: EthernetTask,
+    {
+        task.run(&mut self.netif, &mut self.udp).await
+    }
+}
+
 /// A specialization of the `MatterStack` for Ethernet.
 impl<E> MatterStack<'_, Eth<E>>
 where
@@ -103,7 +173,7 @@ where
         Ok(())
     }
 
-    /// Run the Matter stack for Ethernet network.
+    /// Run the Matter stack for a pre-existing Ethernet network.
     ///
     /// Parameters:
     /// - `netif` - a user-provided `Netif` implementation for the Ethernet network
@@ -111,7 +181,7 @@ where
     /// - `persist` - a user-provided `Persist` implementation
     /// - `handler` - a user-provided DM handler implementation
     /// - `user` - a user-provided future that will be polled only when the netif interface is up
-    pub async fn run<N, U, S, H, X>(
+    pub async fn run_preex<N, U, S, H, X>(
         &self,
         netif: N,
         udp: U,
@@ -122,6 +192,30 @@ where
     where
         N: Netif,
         U: UdpBind,
+        S: KvBlobStore,
+        H: AsyncHandler + AsyncMetadata,
+        X: Future<Output = Result<(), Error>>,
+    {
+        self.run(PreexistingEthernet::new(netif, udp), store, handler, user)
+            .await
+    }
+
+    /// Run the Matter stack for an Ethernet network.
+    ///
+    /// Parameters:
+    /// - `ethernet` - a user-provided `Ethernet` implementation
+    /// - `persist` - a user-provided `Persist` implementation
+    /// - `handler` - a user-provided DM handler implementation
+    /// - `user` - a user-provided future that will be polled only when the netif interface is up
+    pub async fn run<N, S, H, X>(
+        &self,
+        ethernet: N,
+        store: &SharedKvBlobStore<'_, S>,
+        handler: H,
+        user: X,
+    ) -> Result<(), Error>
+    where
+        N: Ethernet,
         S: KvBlobStore,
         H: AsyncHandler + AsyncMetadata,
         X: Future<Output = Result<(), Error>>,
@@ -140,12 +234,7 @@ where
 
         let persist = self.create_persist(store);
 
-        let mut net_task = pin!(self.run_oper_net(
-            netif,
-            udp,
-            core::future::pending(),
-            Option::<(NoNetwork, NoNetwork)>::None
-        ));
+        let mut net_task = pin!(self.run_ethernet(ethernet));
         let mut handler_task = pin!(self.run_handlers(&persist, handler));
         let mut user_task = pin!(user);
 
@@ -153,7 +242,41 @@ where
             .coalesce()
             .await
     }
+
+    async fn run_ethernet<N>(&self, mut ethernet: N) -> Result<(), Error>
+    where
+        N: Ethernet,
+    {
+        #[allow(non_local_definitions)]
+        impl<E> EthernetTask for MatterStackEthernetTask<'_, E>
+        where
+            E: Embedding + 'static,
+        {
+            async fn run<N, U>(&mut self, netif: N, udp: U) -> Result<(), Error>
+            where
+                N: Netif,
+                U: UdpBind,
+            {
+                info!("Ethernet driver started");
+
+                self.0
+                    .run_oper_net(
+                        netif,
+                        udp,
+                        core::future::pending(),
+                        Option::<(NoNetwork, NoNetwork)>::None,
+                    )
+                    .await
+            }
+        }
+
+        Ethernet::run(&mut ethernet, MatterStackEthernetTask(self)).await
+    }
 }
+
+struct MatterStackEthernetTask<'a, E>(&'a MatterStack<'a, Eth<E>>)
+where
+    E: Embedding + 'static;
 
 /// The type of the handler for the root (Endpoint 0) of the Matter Node
 /// when configured for Ethernet network.

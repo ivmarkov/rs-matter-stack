@@ -27,8 +27,8 @@ use rs_matter_stack::matter::utils::sync::blocking::raw::StdRawMutex;
 use rs_matter_stack::netif::UnixNetif;
 use rs_matter_stack::persist::DirKvBlobStore;
 use rs_matter_stack::test_device::{TEST_BASIC_COMM_DATA, TEST_DEV_ATT, TEST_PID, TEST_VID};
-use rs_matter_stack::wireless::traits::{DisconnectedController, PreexistingWireless};
-use rs_matter_stack::WifiMatterStack;
+use rs_matter_stack::wireless::WifiMatterStack;
+use rs_matter_stack::wireless::{DisconnectedController, PreexistingWireless};
 
 use static_cell::StaticCell;
 

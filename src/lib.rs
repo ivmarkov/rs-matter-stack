@@ -41,12 +41,6 @@ use crate::netif::{Netif, NetifConf};
 use crate::network::Network;
 use crate::persist::SharedKvBlobStore;
 
-pub use eth::*;
-pub use wireless::{
-    ThreadMatterStack, ThreadRootEndpointHandler, WifiMatterStack, WifiRootEndpointHandler,
-    WirelessBle,
-};
-
 #[cfg(feature = "std")]
 #[allow(unused_imports)]
 #[macro_use]

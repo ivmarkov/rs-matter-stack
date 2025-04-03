@@ -17,6 +17,7 @@ use embassy_time::{Duration, Timer};
 use env_logger::Target;
 use log::info;
 
+use rs_matter_stack::eth::EthMatterStack;
 use rs_matter_stack::matter::data_model::cluster_basic_information::BasicInfoConfig;
 use rs_matter_stack::matter::data_model::cluster_on_off;
 use rs_matter_stack::matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
@@ -28,7 +29,6 @@ use rs_matter_stack::matter::utils::select::Coalesce;
 use rs_matter_stack::netif::UnixNetif;
 use rs_matter_stack::persist::DirKvBlobStore;
 use rs_matter_stack::test_device::{TEST_BASIC_COMM_DATA, TEST_DEV_ATT, TEST_PID, TEST_VID};
-use rs_matter_stack::EthMatterStack;
 
 use static_cell::StaticCell;
 
@@ -91,7 +91,7 @@ fn main() -> Result<(), Error> {
     // Using `pin!` is completely optional, but saves some memory due to `rustc`
     // not being very intelligent w.r.t. stack usage in async functions
     let store = stack.create_shared_store(DirKvBlobStore::new_default());
-    let mut matter = pin!(stack.run(
+    let mut matter = pin!(stack.run_preex(
         // Will try to find a default network interface
         UnixNetif::default(),
         // The Matter stack needs UDP sockets to communicate with other Matter devices

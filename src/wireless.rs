@@ -25,10 +25,7 @@ use rs_matter::transport::network::NoNetwork;
 use rs_matter::utils::init::{init, Init};
 use rs_matter::utils::select::Coalesce;
 
-use traits::{
-    Controller, Gatt, GattTask, NetworkCredentials, Thread, ThreadData, Wifi, WifiData, Wireless,
-    WirelessCoex, WirelessCoexTask, WirelessConfig, WirelessData, WirelessTask,
-};
+pub use traits::*;
 
 use crate::netif::Netif;
 use crate::network::{Embedding, Network};
@@ -46,7 +43,7 @@ pub mod mgmt;
 pub mod proxy;
 pub mod store;
 pub mod svc;
-pub mod traits;
+mod traits;
 
 const MAX_WIRELESS_NETWORKS: usize = 2;
 
@@ -175,6 +172,45 @@ where
         Ok(())
     }
 
+    /// Run the Matter stack for an already pre-existing wireless network where the BLE and the operational network can co-exist.
+    ///
+    /// Parameters:
+    /// - `netif` - a user-provided `Netif` implementation
+    /// - `udp` - a user-provided `UdpBind` implementation
+    /// - `controller` - a user-provided `Controller` implementation
+    /// - `gatt` - a user-provided `GattPeripheral` implementation
+    /// - `store` - a `SharedKvBlobStore` implementation wrapping a user-provided `KvBlobStore`
+    /// - `handler` - a user-provided DM handler implementation
+    /// - `user` - a user-provided future that will be polled only when the netif interface is up
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_preex<N, U, C, G, S, H, X>(
+        &'static self,
+        netif: N,
+        udp: U,
+        controller: C,
+        gatt: G,
+        store: &SharedKvBlobStore<'_, S>,
+        handler: H,
+        user: X,
+    ) -> Result<(), Error>
+    where
+        N: Netif,
+        U: UdpBind,
+        C: Controller<Data = T::Data>,
+        G: GattPeripheral,
+        S: KvBlobStore,
+        H: AsyncHandler + AsyncMetadata,
+        X: Future<Output = Result<(), Error>>,
+    {
+        self.run_coex(
+            PreexistingWireless::new(netif, udp, controller, gatt),
+            store,
+            handler,
+            user,
+        )
+        .await
+    }
+
     /// Run the Matter stack for a wireless network where the BLE and the operational network can co-exist.
     ///
     /// Parameters:
@@ -208,7 +244,7 @@ where
 
         self.matter().reset_transport()?;
 
-        let mut net_task = pin!(self.run_net_coex(wireless));
+        let mut net_task = pin!(self.run_wireless_coex(wireless));
         let mut handler_task = pin!(self.run_handlers(&persist, handler));
         let mut user_task = pin!(user);
 
@@ -250,7 +286,7 @@ where
 
         self.matter().reset_transport()?;
 
-        let mut net_task = pin!(self.run_net(wireless));
+        let mut net_task = pin!(self.run_wireless(wireless));
         let mut handler_task = pin!(self.run_handlers(&persist, handler));
         let mut user_task = pin!(user);
 
@@ -259,7 +295,7 @@ where
             .await
     }
 
-    async fn run_net_coex<W>(&'static self, mut wireless: W) -> Result<(), Error>
+    async fn run_wireless_coex<W>(&'static self, mut wireless: W) -> Result<(), Error>
     where
         W: WirelessCoex<Data = T::Data>,
     {
@@ -290,14 +326,14 @@ where
 
                 let stack = &mut self.0;
 
-                stack.do_run_net_coex(controller, &netif, &udp, gatt).await
+                stack.run_net_coex(&netif, &udp, controller, gatt).await
             }
         }
 
         wireless.run(MatterStackWirelessTask(self)).await
     }
 
-    async fn run_net<W>(&'static self, mut wireless: W) -> Result<(), Error>
+    async fn run_wireless<W>(&'static self, mut wireless: W) -> Result<(), Error>
     where
         W: Wireless<Data = T::Data> + Gatt,
     {
@@ -326,7 +362,7 @@ where
 
                         info!("BLE driver started");
 
-                        self.0.run_comm_net(&btp).await
+                        self.0.run_btp(&btp).await
                     }
                 }
 
@@ -388,11 +424,11 @@ where
         }
     }
 
-    async fn do_run_net_coex<C, N, U, G>(
+    async fn run_net_coex<C, N, U, G>(
         &'static self,
-        mut controller: C,
         netif: N,
         udp: U,
+        mut controller: C,
         gatt: G,
     ) -> Result<(), Error>
     where
@@ -415,7 +451,7 @@ where
 
                 let mut mgr = WirelessManager::new(&self.network.network_context.controller_proxy);
 
-                let mut net_task = pin!(self.run_comm_net_coex(&netif, &udp, &btp));
+                let mut net_task = pin!(self.run_btp_coex(&netif, &udp, &btp));
                 let mut mgr_task = pin!(mgr.run(&self.network.network_context));
                 let mut proxy_task = pin!(self
                     .network
@@ -451,7 +487,7 @@ where
         }
     }
 
-    async fn run_comm_net_coex<N, U, B>(
+    async fn run_btp_coex<N, U, B>(
         &self,
         mut netif: N,
         mut udp: U,
@@ -481,10 +517,7 @@ where
         select(&mut btp_task, &mut net_task).coalesce().await
     }
 
-    async fn run_comm_net<B>(
-        &'static self,
-        btp: &Btp<&'static BtpContext<M>, M, B>,
-    ) -> Result<(), Error>
+    async fn run_btp<B>(&'static self, btp: &Btp<&'static BtpContext<M>, M, B>) -> Result<(), Error>
     where
         B: GattPeripheral,
     {
