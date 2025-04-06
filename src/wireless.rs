@@ -584,10 +584,7 @@ where
                 Dataver::new_rand(self.matter().rand()),
                 &self.network.network_context.controller_proxy,
             ),
-            self.network
-                .network_context
-                .concurrent_connection
-                .lock(|s| s.get()), // TODO
+            &self.network.network_context,
             self.matter().rand(),
         )
     }
@@ -621,10 +618,7 @@ where
                 Dataver::new_rand(self.matter().rand()),
                 &self.network.network_context.controller_proxy,
             ),
-            self.network
-                .network_context
-                .concurrent_connection
-                .lock(|s| s.get()), // TODO
+            &self.network.network_context,
             self.matter().rand(),
         )
     }

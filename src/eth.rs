@@ -160,7 +160,7 @@ where
             HandlerCompat(EthNwDiagCluster::new(Dataver::new_rand(
                 self.matter().rand(),
             ))),
-            true,
+            &true,
             self.matter().rand(),
         )
     }

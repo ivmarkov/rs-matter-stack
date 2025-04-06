@@ -6,6 +6,7 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use log::info;
 
+use rs_matter::data_model::sdm::general_commissioning::ConcurrentConnectionPolicy;
 use rs_matter::data_model::sdm::nw_commissioning::NetworkCommissioningStatus;
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
@@ -308,5 +309,16 @@ where
 
     async fn wait_state_changed(&self) {
         NetworkContext::wait_state_changed(self).await;
+    }
+}
+
+impl<const N: usize, M, T> ConcurrentConnectionPolicy for NetworkContext<N, M, T>
+where
+    M: RawMutex,
+    T: WirelessData,
+    T::NetworkCredentials: Clone + for<'a> FromTLV<'a> + ToTLV,
+{
+    fn concurrent_connection_supported(&self) -> bool {
+        self.concurrent_connection.lock(|state| state.get())
     }
 }
