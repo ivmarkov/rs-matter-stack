@@ -3,8 +3,6 @@
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::{Duration, Timer};
 
-use log::{error, info, warn};
-
 use rs_matter::data_model::sdm::nw_commissioning::NetworkCommissioningStatus;
 use rs_matter::error::Error;
 
@@ -90,9 +88,10 @@ where
                     break;
                 } else {
                     warn!(
-                        "Connection to network with ID {} failed: {:?}, retrying in {delay}s",
+                        "Connection to network with ID {} failed: {:?}, retrying in {}s",
                         creds.network_id(),
-                        result
+                        result,
+                        delay
                     );
                 }
 
@@ -117,18 +116,18 @@ where
                 });
             });
 
-            if result.is_ok() {
-                info!("Connected to network with ID {}", creds.network_id());
-
-                self.wait_disconnect().await?;
-            } else {
+            if let Err(e) = result.as_ref() {
                 error!(
                     "Failed to connect to network with ID {}: {:?}",
                     creds.network_id(),
-                    result
+                    e
                 );
 
                 break result;
+            } else {
+                info!("Connected to network with ID {}", creds.network_id());
+
+                self.wait_disconnect().await?;
             }
         }
     }

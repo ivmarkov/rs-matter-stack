@@ -1,8 +1,6 @@
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::mutex::Mutex;
 
-use log::info;
-
 use rs_matter::data_model::objects::*;
 use rs_matter::data_model::sdm::wifi_nw_diagnostics::{Attributes, Commands, CLUSTER};
 use rs_matter::error::{Error, ErrorCode};

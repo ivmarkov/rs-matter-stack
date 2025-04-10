@@ -10,8 +10,6 @@ use embassy_futures::select::{select, select3};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::{Duration, Timer};
 
-use log::{info, warn};
-
 use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Dataver, Endpoint};
 use rs_matter::data_model::root_endpoint;
 use rs_matter::data_model::root_endpoint::{handler, OperNwType, RootEndpointHandler};
@@ -537,7 +535,8 @@ where
             self.network.network_context.wait_network_activated().await;
 
             warn!(
-                "Giving BLE/BTP extra {WAIT_SECS} seconds for any outstanding messages before switching to the operational network"
+                "Giving BLE/BTP extra {} seconds for any outstanding messages before switching to the operational network",
+                WAIT_SECS
             );
 
             Timer::after(Duration::from_secs(WAIT_SECS)).await;
