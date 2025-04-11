@@ -14,14 +14,16 @@ rust-version = "1.77"
 
 [patch.crates-io]
 #rs-matter = { git = "https://github.com/project-chip/rs-matter" }
-rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "next" }
+rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "defmt" }
 #rs-matter = { path = "../rs-matter/rs-matter" }
-#edge-nal = { path = "../edge-net/edge-nal" }
-#edge-nal-std = { path = "../edge-net/edge-nal-std" }
-#edge-mdns = { path = "../edge-net/edge-mdns" }
+edge-nal = { git = "https://github.com/ivmarkov/edge-net", branch = "defmt" }
+edge-nal-std = { git = "https://github.com/ivmarkov/edge-net", branch = "defmt" }
+edge-mdns = { git = "https://github.com/ivmarkov/edge-net", branch = "defmt" }
 
 [features]
 default = []
+log = ["dep:log", "rs-matter/log", "embedded-svc/log", "edge-mdns?/log"]
+defmt = ["dep:defmt", "rs-matter/defmt", "embedded-svc/defmt", "heapless/defmt-03", "edge-mdns?/defmt"]
 zeroconf = ["os", "rs-matter/zeroconf"]
 rustcrypto = ["rs-matter/rustcrypto"]
 os = ["backtrace", "rs-matter/os", "rustcrypto", "embassy-time/std"]
@@ -31,7 +33,8 @@ alloc = ["embedded-svc/alloc"]
 examples = ["os", "nix", "embassy-time-queue-utils/generic-queue-64"]
 
 [dependencies]
-log = { version = "0.4", default-features = false }
+log = { version = "0.4", default-features = false, optional = true }
+defmt = { version = "0.3", default-features = false, optional = true, features = ["ip_in_core"] }
 heapless = "0.8"
 enumset = { version = "1", default-features = false }
 bitflags = { version =  "2.5", default-features = false }

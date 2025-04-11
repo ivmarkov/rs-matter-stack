@@ -4,8 +4,6 @@ use core::cell::Cell;
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use log::info;
-
 use rs_matter::data_model::sdm::general_commissioning::ConcurrentConnectionPolicy;
 use rs_matter::data_model::sdm::nw_commissioning::NetworkCommissioningStatus;
 use rs_matter::error::{Error, ErrorCode};

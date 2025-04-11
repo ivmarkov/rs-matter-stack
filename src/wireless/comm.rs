@@ -5,7 +5,6 @@ use core::ops::DerefMut;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use embassy_sync::mutex::Mutex;
-use log::{info, warn};
 
 use rs_matter::data_model::objects::{
     AsyncHandler, AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, CmdDataEncoder,
@@ -212,9 +211,7 @@ where
                     };
 
                     if owriter.is_none() {
-                        let mut writer = encoder
-                            .take()
-                            .unwrap()
+                        let mut writer = unwrap!(encoder.take())
                             .with_command(ResponseCommands::ScanNetworksResponse as _)?;
 
                         writer.start_struct(&CmdDataWriter::TAG)?;
@@ -236,7 +233,7 @@ where
                         owriter = Some(writer);
                     }
 
-                    let writer = owriter.as_mut().unwrap();
+                    let writer = unwrap!(owriter.as_mut());
 
                     result.to_tlv(&TLVTag::Anonymous, writer.deref_mut())?;
 
@@ -329,7 +326,7 @@ where
 
                         info!(
                             "Added network with ID {}",
-                            state.networks.last().unwrap().network_id()
+                            unwrap!(state.networks.last()).network_id()
                         );
 
                         writer.set(NetworkConfigResponse {
@@ -392,7 +389,7 @@ where
                     network_index: Some(index as _),
                 })?;
             } else {
-                warn!("Network with ID {network_id} not found");
+                warn!("Network with ID {} not found", network_id);
 
                 // Not found
                 writer.set(NetworkConfigResponse {
@@ -421,7 +418,10 @@ where
         let network_id: <<T::Data as WirelessData>::NetworkCredentials as NetworkCredentials>::NetworkId =
             req.network_id.0.try_into()?;
 
-        info!("Request to connect to network with ID {network_id} received");
+        info!(
+            "Request to connect to network with ID {} received",
+            network_id
+        );
 
         let mut controller = self.controller.lock().await;
 
@@ -435,7 +435,7 @@ where
                 .cloned()
         });
 
-        controller.connect(creds.as_ref().unwrap()).await?; // TODO
+        controller.connect(unwrap!(creds.as_ref())).await?; // TODO
 
         self.networks.state.lock(|state| {
             let mut state = state.borrow_mut();
@@ -487,18 +487,17 @@ where
 
                 if req.index < state.networks.len() as u8 {
                     let conf = state.networks.remove(index);
-                    state
+                    unwrap!(state
                         .networks
                         .insert(req.index as usize, conf)
-                        .map_err(|_| ())
-                        .unwrap();
+                        .map_err(|_| ()));
 
                     state.changed = true;
                     self.networks.state_changed.notify();
 
                     info!(
-                        "Network with ID {network_id} reordered to index {}",
-                        req.index
+                        "Network with ID {} reordered to index {}",
+                        network_id, req.index
                     );
 
                     writer.set(NetworkConfigResponse {
@@ -508,8 +507,8 @@ where
                     })?;
                 } else {
                     warn!(
-                        "Reordering network with ID {network_id} to index {} failed: out of range",
-                        req.index
+                        "Reordering network with ID {} to index {} failed: out of range",
+                        network_id, req.index
                     );
 
                     writer.set(NetworkConfigResponse {
@@ -519,7 +518,7 @@ where
                     })?;
                 }
             } else {
-                warn!("Network with ID {network_id} not found");
+                warn!("Network with ID {} not found", network_id);
 
                 // Not found
                 writer.set(NetworkConfigResponse {

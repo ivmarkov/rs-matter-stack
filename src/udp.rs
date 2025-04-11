@@ -4,8 +4,6 @@ use core::fmt::Debug;
 
 use edge_nal::{Readable, UdpReceive, UdpSend};
 
-use log::warn;
-
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::transport::network::{Address, NetworkReceive, NetworkSend};
 
@@ -45,6 +43,6 @@ where
 }
 
 fn map_err<E: Debug>(e: E) -> Error {
-    warn!("Network error: {:?}", e);
+    warn!("Network error: {:?}", debug2format!(e));
     ErrorCode::StdIoError.into() // TODO
 }

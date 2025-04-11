@@ -17,8 +17,6 @@ use edge_nal::{UdpBind, UdpSplit};
 use embassy_futures::select::{select, select4, Either4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
-use log::{info, trace};
-
 use persist::{KvBlobBuffer, KvBlobStore, MatterPersist, NetworkPersist};
 use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
 use rs_matter::data_model::core::IMBuffer;
@@ -49,6 +47,9 @@ extern crate std;
 #[allow(unused_imports)]
 #[macro_use]
 extern crate alloc;
+
+// This mod MUST go first, so that the others see its macros.
+pub(crate) mod fmt;
 
 pub mod eth;
 pub mod matter;
@@ -566,7 +567,7 @@ where
                 let (recv, send) = socket.split();
 
                 let mut hostname = heapless::String::<12>::new();
-                write!(
+                write_unwrap!(
                     hostname,
                     "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
                     _netif_conf.mac[0],
@@ -575,8 +576,7 @@ where
                     _netif_conf.mac[3],
                     _netif_conf.mac[4],
                     _netif_conf.mac[5]
-                )
-                .unwrap();
+                );
 
                 self.matter()
                     .run_builtin_mdns(

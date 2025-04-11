@@ -32,6 +32,7 @@ pub const TEST_BASIC_COMM_DATA: BasicCommData = BasicCommData {
 };
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TestDevAtt(());
 
 // credentials/examples/ExamplePAI.cpp FFF1

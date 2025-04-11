@@ -4,7 +4,6 @@ use core::pin::pin;
 use edge_nal::UdpBind;
 
 use embassy_futures::select::select3;
-use log::info;
 
 use rs_matter::data_model::objects::{
     AsyncHandler, AsyncMetadata, Dataver, Endpoint, HandlerCompat,
