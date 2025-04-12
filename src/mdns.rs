@@ -119,7 +119,7 @@ where
 
             services.retain(|(name, _)| name != service);
             services
-                .push((service.try_into().unwrap(), mode))
+                .push((unwrap!(service.try_into()), mode))
                 .map_err(|_| ErrorCode::NoSpace)?;
 
             self.broadcast_signal.signal(());

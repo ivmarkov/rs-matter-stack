@@ -1,4 +1,4 @@
-use core::fmt::{self, Display};
+use core::fmt::Display;
 
 use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -212,7 +212,7 @@ impl TryFrom<u16> for MatterStackKey {
 }
 
 impl Display for MatterStackKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let s = match self {
             MatterStackKey::Fabrics => "fabrics",
             MatterStackKey::EthNetworks => "eth-net",
@@ -220,7 +220,21 @@ impl Display for MatterStackKey {
             MatterStackKey::ThreadNetworks => "thread-net",
         };
 
-        write!(f, "{s}")
+        write!(f, "{}", s)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for MatterStackKey {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        let s = match self {
+            MatterStackKey::Fabrics => "fabrics",
+            MatterStackKey::EthNetworks => "eth-net",
+            MatterStackKey::WifiNetworks => "wifi-net",
+            MatterStackKey::ThreadNetworks => "thread-net",
+        };
+
+        defmt::write!(f, "{}", s)
     }
 }
 
@@ -334,9 +348,9 @@ where
         PooledBuffer<'_, 1, NoopRawMutex, KvBlobBuffer>,
     ) {
         let store = self.store.lock().await;
-        let mut buf = self.buf.get().await.unwrap();
+        let mut buf = unwrap!(self.buf.get().await);
 
-        buf.resize_default(KV_BLOB_BUF_SIZE).unwrap();
+        unwrap!(buf.resize_default(KV_BLOB_BUF_SIZE));
 
         (store, buf)
     }
@@ -345,8 +359,6 @@ where
 #[cfg(feature = "std")]
 mod file {
     use std::io::{Read, Write};
-
-    use log::debug;
 
     use rs_matter::error::Error;
 
@@ -358,7 +370,10 @@ mod file {
     ///
     /// The BLOBs are stored in files named after the keys in the specified directory.
     #[derive(Debug, Clone)]
-    pub struct DirKvBlobStore(std::path::PathBuf);
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct DirKvBlobStore(
+        #[cfg_attr(feature = "defmt", defmt(Debug2Format))] std::path::PathBuf,
+    );
 
     impl DirKvBlobStore {
         /// Create a new `DirKvStore` instance, which will persist
@@ -396,7 +411,7 @@ mod file {
 
                     let data = &buf[..offset];
 
-                    debug!("Key {key}: loaded {}B ({:?})", data.len(), data);
+                    debug!("Key {}: loaded {}B ({:?})", key, data.len(), data);
 
                     Ok(Some(data))
                 }
@@ -408,13 +423,13 @@ mod file {
         pub fn store(&self, key: u16, data: &[u8]) -> Result<(), Error> {
             let path = self.key_path(key);
 
-            std::fs::create_dir_all(path.parent().unwrap())?;
+            std::fs::create_dir_all(unwrap!(path.parent()))?;
 
             let mut file = std::fs::File::create(path)?;
 
             file.write_all(data)?;
 
-            debug!("Key {key}: stored {}B ({:?})", data.len(), data);
+            debug!("Key {}: stored {}B ({:?})", key, data.len(), data);
 
             Ok(())
         }
@@ -425,7 +440,7 @@ mod file {
             let path = self.key_path(key);
 
             if std::fs::remove_file(path).is_ok() {
-                debug!("Key {key}: removed");
+                debug!("Key {}: removed", key);
             }
 
             Ok(())

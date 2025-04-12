@@ -2,8 +2,6 @@
 
 use embedded_svc::wifi::{asynch::Wifi, AuthMethod, ClientConfiguration, Configuration};
 
-use log::{error, info, warn};
-
 use rs_matter::data_model::sdm::nw_commissioning::{WiFiSecurity, WifiBand};
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::tlv::OctetsOwned;
@@ -38,7 +36,7 @@ where
     W: Wifi,
 {
     fn to_err(e: W::Error) -> Error {
-        error!("Wifi error: {:?}", e);
+        error!("Wifi error: {:?}", debug2format!(e));
         Error::new(ErrorCode::NoNetworkInterface)
     }
 }
@@ -81,8 +79,9 @@ where
         let (result, len) = self.0.scan_n::<5>().await.map_err(Self::to_err)?;
 
         info!(
-            "Wifi scan complete, reporting {} results out of {len} total",
-            result.len()
+            "Wifi scan complete, reporting {} results out of {} total",
+            result.len(),
+            len
         );
 
         for r in &result {
@@ -115,10 +114,10 @@ where
                 let result = WifiScanResult {
                     security: to_sec(r.auth_method),
                     ssid: WifiSsid(OctetsOwned {
-                        vec: r.ssid.as_bytes().try_into().unwrap(),
+                        vec: unwrap!(r.ssid.as_bytes().try_into()),
                     }),
                     bssid: OctetsOwned {
-                        vec: Vec::from_slice(&r.bssid).unwrap(),
+                        vec: unwrap!(Vec::from_slice(&r.bssid)),
                     },
                     channel: r.channel as _,
                     band: Some(WifiBand::B2G4),
@@ -144,7 +143,7 @@ where
     ) -> Result<(), Error> {
         let ssid = core::str::from_utf8(creds.ssid.0.vec.as_slice()).unwrap_or("???");
 
-        info!("Wifi connect request for SSID {ssid}");
+        info!("Wifi connect request for SSID {}", ssid);
 
         for auth_method in [
             AuthMethod::WPA2Personal,
@@ -165,7 +164,7 @@ where
 
             self.0
                 .set_configuration(&Configuration::Client(ClientConfiguration {
-                    ssid: ssid.try_into().unwrap(),
+                    ssid: unwrap!(ssid.try_into()),
                     auth_method,
                     password: creds.password.clone(),
                     ..Default::default()
@@ -183,7 +182,7 @@ where
             }
         }
 
-        warn!("Failed to connect to wifi {ssid}");
+        warn!("Failed to connect to wifi {}", ssid);
 
         Err(ErrorCode::NoNetworkInterface.into()) // TODO
     }
@@ -199,7 +198,7 @@ where
         Ok(match conf {
             Configuration::Client(ClientConfiguration { ssid, .. }) => {
                 Some(WifiSsid(OctetsOwned {
-                    vec: ssid.as_bytes().try_into().unwrap(),
+                    vec: unwrap!(ssid.as_bytes().try_into()),
                 }))
             }
             _ => None,

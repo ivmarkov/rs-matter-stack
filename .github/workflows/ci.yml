@@ -43,12 +43,15 @@ jobs:
       - name: Clippy
         run: cargo clippy --no-deps --no-default-features --features ${{matrix.features}} -- -Dwarnings
 
+      - name: Clippy - defmt
+        run: export DEFMT_LOG=trace; cargo clippy --no-deps --no-default-features --features ${{matrix.features}},defmt -- -Dwarnings
+
       - name: Build | no_std
-        run: cargo build --no-default-features
+        run: cargo build --no-default-features --features log
 
       - name: Build
         run: cargo build --no-default-features --features ${{matrix.features}}
 
       - name: Examples
         if: matrix.features == 'os'
-        run: cargo build --examples --features ${{matrix.features}},nix
+        run: cargo build --examples --features ${{matrix.features}},nix,log

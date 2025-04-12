@@ -1,6 +1,5 @@
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::mutex::Mutex;
-use log::info;
 
 use rs_matter::data_model::objects::*;
 use rs_matter::data_model::sdm::thread_nw_diagnostics::{Attributes, Commands, CLUSTER};

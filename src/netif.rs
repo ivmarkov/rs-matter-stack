@@ -1,4 +1,3 @@
-use core::fmt;
 use core::net::{Ipv4Addr, Ipv6Addr};
 
 use rs_matter::error::Error;
@@ -75,9 +74,28 @@ impl Default for NetifConf {
     }
 }
 
-impl fmt::Display for NetifConf {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl core::fmt::Display for NetifConf {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
+            f,
+            "IPv4: {}, IPv6: {}, Interface: {}, MAC: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            self.ipv4,
+            self.ipv6,
+            self.interface,
+            self.mac[0],
+            self.mac[1],
+            self.mac[2],
+            self.mac[3],
+            self.mac[4],
+            self.mac[5]
+        )
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for NetifConf {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(
             f,
             "IPv4: {}, IPv6: {}, Interface: {}, MAC: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
             self.ipv4,
@@ -149,7 +167,7 @@ mod unix {
         /// DefaultNetif is a set of flags that can be used to filter network interfaces
         /// when calling `default_if`
         #[repr(transparent)]
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[cfg_attr(not(feature = "defmt"), derive(Debug, Clone, Copy, PartialEq, Eq, Hash))]
         pub struct NetifSearchFlags: u16 {
             /// Consider only interfaces which have the Loopback flag set
             const LOOPBACK = 0x0001;
@@ -227,7 +245,7 @@ mod unix {
         /// Create a new `UnixNetif`. The implementation will try
         /// to find and use a suitable interface automatically.
         pub fn new_default() -> Self {
-            Self::search(NetifSearchFlags::default()).next().unwrap()
+            unwrap!(Self::search(NetifSearchFlags::default()).next())
         }
 
         /// Create a new `UnixNetif` for the given interface name
@@ -327,8 +345,7 @@ mod unix {
 
     fn get_if_conf(if_name: &str) -> Option<NetifConf> {
         extract_if_conf(
-            nix::ifaddrs::getifaddrs()
-                .unwrap()
+            unwrap!(nix::ifaddrs::getifaddrs())
                 .filter(|ia| ia.interface_name == if_name)
                 .filter_map(|ia| ia.address),
         )

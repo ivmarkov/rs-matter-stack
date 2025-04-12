@@ -21,6 +21,7 @@ impl Sealed for () {}
 /// A trait representing the credentials of a wireless network (Wifi or Thread).
 ///
 /// The trait is sealed and has only two implementations: `WifiCredentials` and `ThreadCredentials`.
+#[cfg(not(feature = "defmt"))]
 pub trait NetworkCredentials:
     Sealed
     + for<'a> TryFrom<&'a AddWifiNetworkRequest<'a>, Error = Error>
@@ -33,6 +34,33 @@ pub trait NetworkCredentials:
     type NetworkId: Display
         + Clone
         + Debug
+        + PartialEq
+        + AsRef<[u8]>
+        + for<'a> TryFrom<&'a [u8], Error = Error>
+        + 'static;
+
+    /// Return the network ID
+    fn network_id(&self) -> Self::NetworkId;
+}
+
+/// A trait representing the credentials of a wireless network (Wifi or Thread).
+///
+/// The trait is sealed and has only two implementations: `WifiCredentials` and `ThreadCredentials`.
+#[cfg(feature = "defmt")]
+pub trait NetworkCredentials:
+    Sealed
+    + for<'a> TryFrom<&'a AddWifiNetworkRequest<'a>, Error = Error>
+    + for<'a> TryFrom<&'a AddThreadNetworkRequest<'a>, Error = Error>
+    + Clone
+    + Debug
+    + defmt::Format
+    + 'static
+{
+    /// The ID of the network (SSID for Wifi and Extended PAN ID for Thread)
+    type NetworkId: Display
+        + Clone
+        + Debug
+        + defmt::Format
         + PartialEq
         + AsRef<[u8]>
         + for<'a> TryFrom<&'a [u8], Error = Error>
@@ -64,12 +92,28 @@ impl AsRef<[u8]> for WifiSsid {
 
 impl Display for WifiSsid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SSID::{:?}", core::str::from_utf8(self.0.vec.as_slice()))
+        if let Ok(str) = core::str::from_utf8(self.0.vec.as_slice()) {
+            write!(f, "SSID::{}", str)
+        } else {
+            write!(f, "SSID::???")
+        }
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for WifiSsid {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        if let Ok(str) = core::str::from_utf8(self.0.vec.as_slice()) {
+            defmt::write!(f, "SSID::{}", str)
+        } else {
+            defmt::write!(f, "SSID::???")
+        }
     }
 }
 
 /// A struct implementing the `NetworkCredentials` trait for Wifi networks.
 #[derive(Debug, Clone, ToTLV, FromTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct WifiCredentials {
     pub ssid: WifiSsid,
     pub password: heapless::String<64>,
@@ -108,6 +152,7 @@ impl NetworkCredentials for WifiCredentials {
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct WifiScanResult {
     pub security: WiFiSecurity,
     pub ssid: WifiSsid,
@@ -192,7 +237,7 @@ impl TryFrom<&[u8]> for ThreadId {
         }
 
         let mut octets = OctetsOwned::new();
-        octets.vec.extend_from_slice(value).unwrap();
+        unwrap!(octets.vec.extend_from_slice(value));
 
         Ok(Self(octets))
     }
@@ -209,13 +254,25 @@ impl Display for ThreadId {
         write!(
             f,
             "EPAN ID::0x{:08x}",
-            u64::from_be_bytes(self.0.vec.clone().into_array().unwrap())
+            u64::from_be_bytes(unwrap!(self.0.vec.clone().into_array()))
+        )
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ThreadId {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(
+            f,
+            "EPAN ID::0x{:08x}",
+            u64::from_be_bytes(unwrap!(self.0.vec.clone().into_array()))
         )
     }
 }
 
 /// A struct implementing the `NetworkCredentials` trait for Thread networks.
 #[derive(Debug, Clone, ToTLV, FromTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ThreadCredentials {
     pub op_dataset: rs_matter::utils::storage::Vec<u8, 256>,
 }
@@ -268,6 +325,7 @@ impl NetworkCredentials for ThreadCredentials {
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ThreadScanResult {
     pub pan_id: u16,
     pub extended_pan_id: u64,
@@ -430,6 +488,7 @@ where
 /// A trait representing all DTOs required for wireless network commissioning and operation.
 ///
 /// The trait is sealed and has only two implementations: `WifiData` and `ThreadData`.
+#[cfg(not(feature = "defmt"))]
 pub trait WirelessData: Sealed + Debug + 'static {
     /// The type of the network credentials (e.g. WifiCredentials or ThreadCredentials)
     type NetworkCredentials: NetworkCredentials + Clone;
@@ -444,8 +503,27 @@ pub trait WirelessData: Sealed + Debug + 'static {
     const WIFI: bool;
 }
 
+/// A trait representing all DTOs required for wireless network commissioning and operation.
+///
+/// The trait is sealed and has only two implementations: `WifiData` and `ThreadData`.
+#[cfg(feature = "defmt")]
+pub trait WirelessData: Sealed + Debug + defmt::Format + 'static {
+    /// The type of the network credentials (e.g. WifiCredentials or ThreadCredentials)
+    type NetworkCredentials: NetworkCredentials + Clone;
+
+    /// The type of the scan result (e.g. WiFiInterfaceScanResult or ThreadInterfaceScanResult)
+    type ScanResult: Debug + defmt::Format + Clone;
+
+    /// The type of the statistics (they are different for Wifi vs Thread)
+    type Stats: Debug + defmt::Format + Default;
+
+    // Whether this wireless data is for Wifi networks (`true`) or Thread networks (`false`)
+    const WIFI: bool;
+}
+
 /// A struct implementing the `WirelessData` trait for Wifi networks.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct WifiData;
 
 impl Sealed for WifiData {}
@@ -460,6 +538,7 @@ impl WirelessData for WifiData {
 
 /// A struct implementing the `WirelessData` trait for Thread networks.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ThreadData;
 
 impl Sealed for ThreadData {}
@@ -482,6 +561,7 @@ pub trait WirelessConfig: Sealed + 'static {
 
 /// A struct representing a Wifi wireless configuration
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Wifi;
 
 impl Sealed for Wifi {}
@@ -492,6 +572,7 @@ impl WirelessConfig for Wifi {
 
 /// A struct representing a Thread wireless configuration
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Thread;
 
 impl Sealed for Thread {}
