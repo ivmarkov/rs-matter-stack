@@ -113,7 +113,7 @@ where
     /// Run the persist instance, listening for changes in the Matter stack's state.
     pub async fn run(&self) -> Result<(), Error> {
         loop {
-            let wait_fabrics = self.matter.wait_fabrics_changed();
+            let wait_fabrics = self.matter.wait_persist();
             let wait_networks = self.networks.wait_state_changed();
 
             select(wait_fabrics, wait_networks).await;
