@@ -48,6 +48,7 @@ fn main() -> Result<(), Error> {
                 vid: TEST_VID,
                 pid: TEST_PID,
                 hw_ver: 2,
+                hw_ver_str: "2",
                 sw_ver: 1,
                 sw_ver_str: "1",
                 serial_no: "aabbccdd",
