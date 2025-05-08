@@ -1,8 +1,9 @@
 use core::fmt::Display;
 
 use embassy_futures::select::select;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 
+use rs_matter::data_model::networks::wireless::{WirelessNetwork, WirelessNetworks};
 use rs_matter::error::Error;
 use rs_matter::utils::storage::pooled::{BufferAccess, PooledBuffer, PooledBuffers};
 use rs_matter::utils::sync::{IfMutex, IfMutexGuard};
@@ -41,12 +42,7 @@ where
         let (mut kv, mut buf) = self.store.get().await;
 
         kv.remove(MatterStackKey::Fabrics as _, &mut buf).await?;
-        kv.remove(MatterStackKey::EthNetworks as _, &mut buf)
-            .await?;
-        kv.remove(MatterStackKey::WifiNetworks as _, &mut buf)
-            .await?;
-        kv.remove(MatterStackKey::ThreadNetworks as _, &mut buf)
-            .await?;
+        kv.remove(MatterStackKey::Networks as _, &mut buf).await?;
 
         self.networks.reset()?;
 
@@ -66,7 +62,7 @@ where
         })
         .await?;
 
-        kv.load(C::KEY as _, &mut buf, |data| {
+        kv.load(MatterStackKey::Networks as _, &mut buf, |data| {
             if let Some(data) = data {
                 self.networks.load(data)?;
             }
@@ -100,8 +96,10 @@ where
             }
 
             if self.networks.changed() {
-                kv.store(C::KEY as _, &mut buf, |buf| self.networks.store(buf))
-                    .await?;
+                kv.store(MatterStackKey::Networks as _, &mut buf, |buf| {
+                    self.networks.store(buf)
+                })
+                .await?;
             }
 
             Ok(true)
@@ -129,8 +127,6 @@ where
 /// - `()` - which is used with the `Eth` network
 /// - `&NetworkContext` - which is used with the `WirelessBle` network.
 pub trait NetworkPersist: Sealed {
-    const KEY: MatterStackKey;
-
     /// Reset all networks, removing all stored data from the memory
     fn reset(&self) -> Result<(), Error>;
 
@@ -155,13 +151,41 @@ pub trait NetworkPersist: Sealed {
     async fn wait_state_changed(&self);
 }
 
+impl<const N: usize, M, T> Sealed for &WirelessNetworks<N, M, T> where M: RawMutex {}
+
+impl<const N: usize, M, T> NetworkPersist for &WirelessNetworks<N, M, T>
+where
+    M: RawMutex,
+    T: WirelessNetwork,
+{
+    fn reset(&self) -> Result<(), Error> {
+        WirelessNetworks::reset(self);
+
+        Ok(())
+    }
+
+    fn load(&self, data: &[u8]) -> Result<(), Error> {
+        WirelessNetworks::load(self, data)
+    }
+
+    fn store(&self, buf: &mut [u8]) -> Result<usize, Error> {
+        WirelessNetworks::store(self, buf).map(|data| data.map(|data| data.len()).unwrap_or(0))
+    }
+
+    fn changed(&self) -> bool {
+        WirelessNetworks::changed(self)
+    }
+
+    async fn wait_state_changed(&self) {
+        WirelessNetworks::wait_persist(self).await
+    }
+}
+
 /// A no-op implementation of the `NetworksPersist` trait.
 ///
 /// Used when the Matter stack is configured for Ethernet, as in that case
 /// there is no network state that needs to be saved
 impl NetworkPersist for () {
-    const KEY: MatterStackKey = MatterStackKey::EthNetworks; // Does not matter really as Ethernet networks do not have a persistence story
-
     fn reset(&self) -> Result<(), Error> {
         Ok(())
     }
@@ -192,9 +216,7 @@ pub const VENDOR_KEYS_START: u16 = 0x1000;
 #[repr(u16)]
 pub enum MatterStackKey {
     Fabrics = 0,
-    EthNetworks = 1,
-    WifiNetworks = 2,
-    ThreadNetworks = 3,
+    Networks = 1,
 }
 
 impl TryFrom<u16> for MatterStackKey {
@@ -203,9 +225,7 @@ impl TryFrom<u16> for MatterStackKey {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(MatterStackKey::Fabrics),
-            1 => Ok(MatterStackKey::EthNetworks),
-            2 => Ok(MatterStackKey::WifiNetworks),
-            3 => Ok(MatterStackKey::ThreadNetworks),
+            1 => Ok(MatterStackKey::Networks),
             _ => Err(()),
         }
     }
@@ -215,9 +235,7 @@ impl Display for MatterStackKey {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let s = match self {
             MatterStackKey::Fabrics => "fabrics",
-            MatterStackKey::EthNetworks => "eth-net",
-            MatterStackKey::WifiNetworks => "wifi-net",
-            MatterStackKey::ThreadNetworks => "thread-net",
+            MatterStackKey::Networks => "networks",
         };
 
         write!(f, "{}", s)
@@ -229,9 +247,7 @@ impl defmt::Format for MatterStackKey {
     fn format(&self, f: defmt::Formatter<'_>) {
         let s = match self {
             MatterStackKey::Fabrics => "fabrics",
-            MatterStackKey::EthNetworks => "eth-net",
-            MatterStackKey::WifiNetworks => "wifi-net",
-            MatterStackKey::ThreadNetworks => "thread-net",
+            MatterStackKey::Networks => "networks",
         };
 
         defmt::write!(f, "{}", s)
