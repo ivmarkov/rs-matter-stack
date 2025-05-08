@@ -10,19 +10,21 @@
 #![warn(clippy::large_types_passed_by_value)]
 
 use core::future::Future;
-use core::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
+use core::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use core::pin::pin;
 
 use edge_nal::{UdpBind, UdpSplit};
 
-use embassy_futures::select::{select, select4, Either4};
+use embassy_futures::select::{select4, Either4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use persist::{KvBlobBuffer, KvBlobStore, MatterPersist, NetworkPersist};
-use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
+use rs_matter::data_model::basic_info::BasicInfoConfig;
 use rs_matter::data_model::core::IMBuffer;
+use rs_matter::data_model::networks::NetChangeNotif;
 use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata};
 use rs_matter::data_model::sdm::dev_att::DevAttDataFetcher;
+use rs_matter::data_model::sdm::gen_diag::NetifDiag;
 use rs_matter::data_model::subscriptions::Subscriptions;
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::mdns::{Mdns, MdnsService};
@@ -31,12 +33,9 @@ use rs_matter::transport::network::{Address, ChainedNetwork, NetworkReceive, Net
 use rs_matter::utils::epoch::Epoch;
 use rs_matter::utils::init::{init, Init};
 use rs_matter::utils::rand::Rand;
-use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::utils::sync::Signal;
 use rs_matter::{BasicCommData, Matter, MATTER_PORT};
 
-use crate::netif::{Netif, NetifConf};
 use crate::network::Network;
 use crate::persist::SharedKvBlobStore;
 
@@ -56,11 +55,9 @@ pub mod eth;
 pub mod matter;
 pub mod mdns;
 pub mod nal;
-pub mod netif;
 pub mod network;
 pub mod persist;
 pub mod rand;
-pub mod test_device;
 pub mod udp;
 pub mod utils;
 pub mod wireless;
@@ -68,6 +65,8 @@ pub mod wireless;
 mod private {
     /// A marker super-trait for sealed traits
     pub trait Sealed {}
+
+    impl Sealed for () {}
 }
 
 const MAX_SUBSCRIPTIONS: usize = 3;
@@ -119,7 +118,7 @@ where
     network: N,
     #[allow(unused)]
     mdns: MdnsType<'a>,
-    netif_conf: Signal<NoopRawMutex, Option<NetifConf>>,
+    //netif_conf: Signal<NoopRawMutex, Option<NetifConf>>,
 }
 
 impl<'a, N> MatterStack<'a, N>
@@ -171,7 +170,7 @@ where
             store_buf: PooledBuffers::new(0),
             network: N::INIT,
             mdns,
-            netif_conf: Signal::new(None),
+            //netif_conf: Signal::new(None),
         }
     }
 
@@ -217,7 +216,7 @@ where
             store_buf <- PooledBuffers::init(0),
             network <- N::init(),
             mdns,
-            netif_conf: Signal::new(None),
+            //netif_conf: Signal::new(None),
         })
     }
 
@@ -294,41 +293,41 @@ where
         self.subscriptions.notify_changed();
     }
 
-    /// User code hook to get the state of the netif passed to the
-    /// `run_with_netif` method.
-    ///
-    /// Useful when user code needs to bring up/down its own IP services depending on
-    /// when the netif controlled by Matter goes up, down or changes its IP configuration.
-    pub async fn get_netif_conf(&self) -> Option<NetifConf> {
-        self.netif_conf
-            .wait(|netif_conf| Some(netif_conf.clone()))
-            .await
-    }
+    // /// User code hook to get the state of the netif passed to the
+    // /// `run_with_netif` method.
+    // ///
+    // /// Useful when user code needs to bring up/down its own IP services depending on
+    // /// when the netif controlled by Matter goes up, down or changes its IP configuration.
+    // pub async fn get_netif_conf(&self) -> Option<NetifConf> {
+    //     self.netif_conf
+    //         .wait(|netif_conf| Some(netif_conf.clone()))
+    //         .await
+    // }
 
-    fn update_netif_conf(&self, netif_conf: Option<&NetifConf>) -> bool {
-        self.netif_conf.modify(|global_ip_info| {
-            if global_ip_info.as_ref() != netif_conf {
-                *global_ip_info = netif_conf.cloned();
-                (true, true)
-            } else {
-                (false, false)
-            }
-        })
-    }
+    // fn update_netif_conf(&self, netif_conf: Option<&NetifConf>) -> bool {
+    //     self.netif_conf.modify(|global_ip_info| {
+    //         if global_ip_info.as_ref() != netif_conf {
+    //             *global_ip_info = netif_conf.cloned();
+    //             (true, true)
+    //         } else {
+    //             (false, false)
+    //         }
+    //     })
+    // }
 
-    /// User code hook to detect changes to the IP state of the netif passed to the
-    /// `run_with_netif` method.
-    ///
-    /// Useful when user code needs to bring up/down its own IP services depending on
-    /// when the netif controlled by Matter goes up, down or changes its IP configuration.
-    pub async fn wait_netif_changed(
-        &self,
-        prev_netif_info: Option<&NetifConf>,
-    ) -> Option<NetifConf> {
-        self.netif_conf
-            .wait(|netif_info| (netif_info.as_ref() != prev_netif_info).then(|| netif_info.clone()))
-            .await
-    }
+    // /// User code hook to detect changes to the IP state of the netif passed to the
+    // /// `run_with_netif` method.
+    // ///
+    // /// Useful when user code needs to bring up/down its own IP services depending on
+    // /// when the netif controlled by Matter goes up, down or changes its IP configuration.
+    // pub async fn wait_netif_changed(
+    //     &self,
+    //     prev_netif_info: Option<&NetifConf>,
+    // ) -> Option<NetifConf> {
+    //     self.netif_conf
+    //         .wait(|netif_info| (netif_info.as_ref() != prev_netif_info).then(|| netif_info.clone()))
+    //         .await
+    // }
 
     /// Return information whether the Matter instance is already commissioned.
     pub async fn is_commissioned(&self) -> Result<bool, Error> {
@@ -347,59 +346,122 @@ where
     /// - `comm` - a tuple of additional and optional `NetworkReceive` and `NetworkSend` transport implementations
     ///   (useful when a second transport needs to run in parallel with the operational Matter transport,
     ///   i.e. when using concurrent commissisoning)
-    async fn run_oper_net<I, U, X, R, S>(
+    async fn run_oper_net<U, I, X, R, S>(
         &self,
-        netif: I,
         udp: U,
+        netif: I,
         until: X,
         mut comm: Option<(R, S)>,
     ) -> Result<(), Error>
     where
-        I: Netif,
         U: UdpBind,
+        I: NetifDiag + NetChangeNotif,
         X: Future<Output = Result<(), Error>>,
         R: NetworkReceive,
         S: NetworkSend,
     {
+        #[derive(Clone, Debug, Eq, PartialEq, Hash)]
+        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+        struct Netif {
+            ipv6: Ipv6Addr,
+            ipv4: Ipv4Addr,
+            mac: [u8; 8],
+            operational: bool,
+        }
+
+        impl Netif {
+            pub const fn new() -> Self {
+                Self {
+                    ipv6: Ipv6Addr::UNSPECIFIED,
+                    ipv4: Ipv4Addr::UNSPECIFIED,
+                    mac: [0; 8],
+                    operational: false,
+                }
+            }
+        }
+
+        fn load_netif<C>(net_ctl: C, netif: &mut Netif) -> Result<(), Error>
+        where
+            C: NetifDiag,
+        {
+            netif.operational = false;
+            netif.ipv6 = Ipv6Addr::UNSPECIFIED;
+            netif.ipv4 = Ipv4Addr::UNSPECIFIED;
+            netif.mac = [0; 8];
+
+            net_ctl.netifs(&mut |ni| {
+                if ni.operational && !ni.ipv6_addrs.is_empty() {
+                    netif.operational = true;
+                    netif.ipv6 = ni.ipv6_addrs[0];
+                    netif.ipv4 = ni
+                        .ipv4_addrs
+                        .first()
+                        .copied()
+                        .unwrap_or(Ipv4Addr::UNSPECIFIED);
+                    netif.mac = *ni.hw_addr;
+                }
+
+                Ok(())
+            })
+        }
+
+        async fn wait_changed<C>(
+            net_ctl: C,
+            cur_netif: &Netif,
+            new_netif: &mut Netif,
+        ) -> Result<(), Error>
+        where
+            C: NetifDiag + NetChangeNotif,
+        {
+            loop {
+                load_netif(&net_ctl, new_netif)?;
+
+                if &*new_netif != cur_netif {
+                    trace!("Change detected: {:?}", new_netif);
+                    break Ok(());
+                }
+
+                trace!("No change");
+                net_ctl.wait_changed().await;
+            }
+        }
+
         let mut until_task = pin!(until);
 
-        let _guard = scopeguard::guard((), |_| {
-            self.update_netif_conf(None);
-        });
+        // let _guard = scopeguard::guard((), |_| {
+        //     self.update_netif_conf(None);
+        // });
+
+        let mut new_netif = Netif::new();
+        load_netif(&netif, &mut new_netif)?;
 
         loop {
-            let netif_conf = netif.get_conf().await?;
-            self.update_netif_conf(netif_conf.as_ref());
+            let cur_netif = new_netif.clone();
 
-            let mut netif_changed_task = pin!(async {
-                loop {
-                    trace!("Waiting...");
-                    if netif_conf != netif.get_conf().await? {
-                        trace!("Change detected: {:?}", netif_conf);
-                        break Ok::<_, Error>(());
-                    } else {
-                        trace!("No change");
-                        netif.wait_conf_change().await?;
-                    }
-                }
-            });
+            let mut netif_changed_task = pin!(wait_changed(&netif, &cur_netif, &mut new_netif));
 
-            let result = if let Some(netif_conf) = netif_conf.as_ref() {
-                info!("Netif up: {}", netif_conf);
+            let result = if cur_netif.operational {
+                info!("Netif up: {:?}", cur_netif);
 
                 let mut socket = udp
                     .bind(SocketAddr::V6(SocketAddrV6::new(
                         Ipv6Addr::UNSPECIFIED,
                         MATTER_PORT,
                         0,
-                        netif_conf.interface,
+                        0,
                     )))
                     .await
                     .map_err(|_| ErrorCode::StdIoError)?;
 
                 let (recv, send) = socket.split();
 
-                let mut mdns_task = pin!(self.run_builtin_mdns(&udp, netif_conf));
+                let mut mdns_task = pin!(self.run_builtin_mdns(
+                    &udp,
+                    &cur_netif.mac,
+                    cur_netif.ipv4,
+                    cur_netif.ipv6,
+                    0,
+                ));
 
                 if let Some((comm_recv, comm_send)) = comm.as_mut() {
                     info!("Running operational and extra networks");
@@ -461,37 +523,15 @@ where
         }
     }
 
-    /// A transport-agnostic method to run the main Matter loop.
-    /// The user is expected to provide a transport implementation in the form of
-    /// `NetworkSend` and `NetworkReceive` implementations.
-    ///
-    /// The utility runs the following tasks:
-    /// - The main Matter transport via the user-provided traits
-    /// - The PSM task handling changes to fabrics and ACLs as well as initial load of these from NVS
-    /// - The Matter responder (i.e. handling incoming exchanges)
-    ///
-    /// Unlike `run_with_netif`, this utility method does _not_ run the mDNS service, as the
-    /// user-provided transport might not be IP-based (i.e. BLE).
-    ///
-    /// It also has no facilities for monitoring the transport network state.
-    async fn run_handlers<S, C, H>(
-        &self,
-        persist: &MatterPersist<'_, S, C>,
-        handler: H,
-    ) -> Result<(), Error>
+    async fn run_handler<H>(&self, handler: H) -> Result<(), Error>
     where
         H: AsyncHandler + AsyncMetadata,
-        S: KvBlobStore,
-        C: NetworkPersist,
     {
         // TODO
         // Reset the Matter transport buffers and all sessions first
         // self.matter().reset_transport()?;
 
-        let mut psm = pin!(self.run_psm(persist));
-        let mut respond = pin!(self.run_responder(handler));
-
-        select(&mut psm, &mut respond).coalesce().await
+        self.run_responder(handler).await
     }
 
     async fn run_psm<S, C>(&self, persist: &MatterPersist<'_, S, C>) -> Result<(), Error>
@@ -528,7 +568,14 @@ where
         Ok(())
     }
 
-    async fn run_builtin_mdns<U>(&self, _udp: U, _netif_conf: &NetifConf) -> Result<(), Error>
+    async fn run_builtin_mdns<U>(
+        &self,
+        _udp: U,
+        _mac: &[u8],
+        _ipv4: Ipv4Addr,
+        _ipv6: Ipv6Addr,
+        _interface: u32,
+    ) -> Result<(), Error>
     where
         U: UdpBind,
     {
@@ -551,33 +598,50 @@ where
                         Ipv6Addr::UNSPECIFIED,
                         MDNS_PORT,
                         0,
-                        _netif_conf.interface,
+                        _interface,
                     )))
                     .await
                     .map_err(|_| ErrorCode::StdIoError)?;
 
                 socket
-                    .join_v4(MDNS_IPV4_BROADCAST_ADDR, _netif_conf.ipv4)
+                    .join_v4(MDNS_IPV4_BROADCAST_ADDR, _ipv4)
                     .await
                     .map_err(|_| ErrorCode::StdIoError)?;
                 socket
-                    .join_v6(MDNS_IPV6_BROADCAST_ADDR, _netif_conf.interface)
+                    .join_v6(MDNS_IPV6_BROADCAST_ADDR, _interface)
                     .await
                     .map_err(|_| ErrorCode::StdIoError)?;
 
                 let (recv, send) = socket.split();
 
-                let mut hostname = heapless::String::<12>::new();
-                write_unwrap!(
-                    hostname,
-                    "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
-                    _netif_conf.mac[0],
-                    _netif_conf.mac[1],
-                    _netif_conf.mac[2],
-                    _netif_conf.mac[3],
-                    _netif_conf.mac[4],
-                    _netif_conf.mac[5]
-                );
+                let mut hostname = heapless::String::<16>::new();
+                if _mac.len() == 6 {
+                    write_unwrap!(
+                        hostname,
+                        "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+                        _mac[0],
+                        _mac[1],
+                        _mac[2],
+                        _mac[3],
+                        _mac[4],
+                        _mac[5]
+                    );
+                } else if _mac.len() == 8 {
+                    write_unwrap!(
+                        hostname,
+                        "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+                        _mac[0],
+                        _mac[1],
+                        _mac[2],
+                        _mac[3],
+                        _mac[4],
+                        _mac[5],
+                        _mac[6],
+                        _mac[7]
+                    );
+                } else {
+                    panic!("Invalid MAC address length: should be 6 or 8 bytes");
+                }
 
                 self.matter()
                     .run_builtin_mdns(
@@ -586,11 +650,11 @@ where
                         &Host {
                             id: 0,
                             hostname: &hostname,
-                            ip: _netif_conf.ipv4,
-                            ipv6: _netif_conf.ipv6,
+                            ip: _ipv4,
+                            ipv6: _ipv6,
                         },
-                        Some(_netif_conf.ipv4),
-                        Some(_netif_conf.interface),
+                        Some(_ipv4),
+                        Some(_interface),
                     )
                     .await?;
             }
@@ -613,6 +677,46 @@ where
         R: NetworkReceive,
     {
         self.matter().run_transport(send, recv).await?;
+
+        Ok(())
+    }
+}
+
+/// A trait representing a user task that needs access to the operational network interface
+/// (Netif and UDP stack) to perform its work.
+///
+/// Note that the task would be started only when `rs-matter`
+/// brings up the operational interface (eth, wifi or thread)
+/// and if the interface goes down, the user task would be stopped.
+/// Upon re-connection, the task would be started again.
+pub trait UserTask {
+    /// Run the task with the given network interface and UDP stack
+    async fn run<U, N>(&mut self, udp: U, netif: N) -> Result<(), Error>
+    where
+        U: UdpBind,
+        N: NetifDiag + NetChangeNotif;
+}
+
+impl<T> UserTask for &mut T
+where
+    T: UserTask,
+{
+    async fn run<U, N>(&mut self, udp: U, netif: N) -> Result<(), Error>
+    where
+        U: UdpBind,
+        N: NetifDiag + NetChangeNotif,
+    {
+        (*self).run(udp, netif).await
+    }
+}
+
+impl UserTask for () {
+    async fn run<U, N>(&mut self, _udp: U, _netif: N) -> Result<(), Error>
+    where
+        U: UdpBind,
+        N: NetifDiag + NetChangeNotif,
+    {
+        core::future::pending::<()>().await;
 
         Ok(())
     }
