@@ -14,14 +14,14 @@ rust-version = "1.77"
 
 [patch.crates-io]
 #rs-matter = { git = "https://github.com/project-chip/rs-matter" }
-rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "next" }
-#rs-matter = { path = "../rs-matter/rs-matter" }
+#rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "next" }
+rs-matter = { path = "../rs-matter/rs-matter" }
 edge-nal = { git = "https://github.com/ivmarkov/edge-net" }
 edge-nal-std = { git = "https://github.com/ivmarkov/edge-net" }
 edge-mdns = { git = "https://github.com/ivmarkov/edge-net" }
 
 [features]
-default = []
+default = ["examples"]
 log = ["dep:log", "rs-matter/log", "embedded-svc/log", "edge-mdns?/log"]
 defmt = ["dep:defmt", "rs-matter/defmt", "embedded-svc/defmt", "heapless/defmt-03", "edge-mdns?/defmt"]
 zeroconf = ["os", "rs-matter/zeroconf"]
@@ -30,7 +30,7 @@ os = ["backtrace", "rs-matter/os", "rustcrypto", "embassy-time/std"]
 backtrace = ["std", "rs-matter/backtrace"]
 std = ["alloc", "rs-matter/std", "edge-nal-std"]
 alloc = ["embedded-svc/alloc"]
-examples = ["os", "nix", "embassy-time-queue-utils/generic-queue-64"]
+examples = ["log", "os", "nix", "embassy-time-queue-utils/generic-queue-64"]
 
 [dependencies]
 log = { version = "0.4", default-features = false, optional = true }
