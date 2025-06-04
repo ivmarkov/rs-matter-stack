@@ -14,21 +14,26 @@ use embassy_time::{Duration, Timer};
 
 use log::info;
 
-use rs_matter_stack::matter::data_model::cluster_basic_information::BasicInfoConfig;
-use rs_matter_stack::matter::data_model::cluster_on_off;
+use rs_matter::data_model::networks::unix::UnixNetifs;
+use rs_matter::data_model::networks::wireless::NoopWirelessNetCtl;
+use rs_matter::data_model::objects::EmptyHandler;
+use rs_matter::data_model::sdm::net_comm::NetworkType;
+use rs_matter::test_device::TEST_DEV_DET;
 use rs_matter_stack::matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter_stack::matter::data_model::objects::{Dataver, Endpoint, HandlerCompat, Node};
-use rs_matter_stack::matter::data_model::system_model::descriptor;
+use rs_matter_stack::matter::data_model::objects::{Async, Dataver, Endpoint, Node};
+use rs_matter_stack::matter::data_model::on_off;
+use rs_matter_stack::matter::data_model::on_off::{ClusterHandler as _, OnOffHandler};
+use rs_matter_stack::matter::data_model::system_model::desc::{ClusterHandler as _, DescHandler};
 use rs_matter_stack::matter::error::Error;
+use rs_matter_stack::matter::test_device::{TEST_DEV_ATT, TEST_DEV_COMM};
 use rs_matter_stack::matter::transport::network::btp::BuiltinGattPeripheral;
 use rs_matter_stack::matter::utils::init::InitMaybeUninit;
 use rs_matter_stack::matter::utils::select::Coalesce;
 use rs_matter_stack::matter::utils::sync::blocking::raw::StdRawMutex;
-use rs_matter_stack::netif::UnixNetif;
+use rs_matter_stack::matter::{clusters, devices};
 use rs_matter_stack::persist::DirKvBlobStore;
-use rs_matter_stack::test_device::{TEST_BASIC_COMM_DATA, TEST_DEV_ATT, TEST_PID, TEST_VID};
+use rs_matter_stack::wireless::PreexistingWireless;
 use rs_matter_stack::wireless::WifiMatterStack;
-use rs_matter_stack::wireless::{DisconnectedController, PreexistingWireless};
 
 use static_cell::StaticCell;
 
@@ -44,46 +49,30 @@ fn main() -> Result<(), Error> {
     let stack = MATTER_STACK
         .uninit()
         .init_with(WifiMatterStack::init_default(
-            &BasicInfoConfig {
-                vid: TEST_VID,
-                pid: TEST_PID,
-                hw_ver: 2,
-                hw_ver_str: "2",
-                sw_ver: 1,
-                sw_ver_str: "1",
-                serial_no: "aabbccdd",
-                device_name: "MyLight",
-                product_name: "ACME Light",
-                vendor_name: "ACME",
-                sai: None,
-                sii: None,
-            },
-            TEST_BASIC_COMM_DATA,
+            &TEST_DEV_DET,
+            TEST_DEV_COMM,
             &TEST_DEV_ATT,
         ));
 
     // Our "light" on-off cluster.
     // Can be anything implementing `rs_matter::data_model::AsyncHandler`
-    let on_off = cluster_on_off::OnOffCluster::new(Dataver::new_rand(stack.matter().rand()));
+    let on_off = on_off::OnOffHandler::new(Dataver::new_rand(stack.matter().rand()));
 
     // Chain our endpoint clusters with the
     // (root) Endpoint 0 system clusters in the final handler
-    let handler = stack
-        .root_handler()
+    let handler = EmptyHandler
         // Our on-off cluster, on Endpoint 1
         .chain(
             LIGHT_ENDPOINT_ID,
-            cluster_on_off::ID,
-            HandlerCompat(&on_off),
+            OnOffHandler::CLUSTER.id,
+            Async(on_off::HandlerAdaptor(&on_off)),
         )
         // Each Endpoint needs a Descriptor cluster too
         // Just use the one that `rs-matter` provides out of the box
         .chain(
             LIGHT_ENDPOINT_ID,
-            descriptor::ID,
-            HandlerCompat(descriptor::DescriptorCluster::new(Dataver::new_rand(
-                stack.matter().rand(),
-            ))),
+            DescHandler::CLUSTER.id,
+            Async(DescHandler::new(Dataver::new_rand(stack.matter().rand())).adapt()),
         );
 
     // Run the Matter stack with our handler
@@ -91,19 +80,19 @@ fn main() -> Result<(), Error> {
     // not being very intelligent w.r.t. stack usage in async functions
     let store = stack.create_shared_store(DirKvBlobStore::new_default());
     let mut matter = pin!(stack.run(
-        // A dummy wireless modem which does nothing
         PreexistingWireless::new(
-            UnixNetif::new_default(),
             edge_nal_std::Stack::new(),
-            DisconnectedController::new(),
+            UnixNetifs,
+            // A dummy wireless controller that does nothing
+            NoopWirelessNetCtl::new(NetworkType::Wifi),
             BuiltinGattPeripheral::new(None),
         ),
         // Will persist in `<tmp-dir>/rs-matter`
         &store,
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
-        // No user future to run
-        core::future::pending(),
+        // No user task to run
+        (),
     ));
 
     // Just for demoing purposes:
@@ -146,11 +135,11 @@ const LIGHT_ENDPOINT_ID: u16 = 1;
 const NODE: Node = Node {
     id: 0,
     endpoints: &[
-        WifiMatterStack::<StdRawMutex, ()>::root_metadata(),
+        WifiMatterStack::<StdRawMutex, ()>::root_endpoint(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
-            device_types: &[DEV_TYPE_ON_OFF_LIGHT],
-            clusters: &[descriptor::CLUSTER, cluster_on_off::CLUSTER],
+            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
+            clusters: clusters!(DescHandler::CLUSTER, OnOffHandler::CLUSTER),
         },
     ],
 };
