@@ -16,7 +16,7 @@ use log::info;
 
 use rs_matter::data_model::networks::unix::UnixNetifs;
 use rs_matter::data_model::networks::wireless::NoopWirelessNetCtl;
-use rs_matter::data_model::objects::EmptyHandler;
+use rs_matter::data_model::objects::{EmptyHandler, EpClMatcher};
 use rs_matter::data_model::sdm::net_comm::NetworkType;
 use rs_matter::test_device::TEST_DEV_DET;
 use rs_matter_stack::matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
@@ -63,15 +63,13 @@ fn main() -> Result<(), Error> {
     let handler = EmptyHandler
         // Our on-off cluster, on Endpoint 1
         .chain(
-            LIGHT_ENDPOINT_ID,
-            OnOffHandler::CLUSTER.id,
+            EpClMatcher::new(Some(LIGHT_ENDPOINT_ID), Some(OnOffHandler::CLUSTER.id)),
             Async(on_off::HandlerAdaptor(&on_off)),
         )
         // Each Endpoint needs a Descriptor cluster too
         // Just use the one that `rs-matter` provides out of the box
         .chain(
-            LIGHT_ENDPOINT_ID,
-            DescHandler::CLUSTER.id,
+            EpClMatcher::new(Some(LIGHT_ENDPOINT_ID), Some(DescHandler::CLUSTER.id)),
             Async(DescHandler::new(Dataver::new_rand(stack.matter().rand())).adapt()),
         );
 
