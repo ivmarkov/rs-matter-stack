@@ -14,17 +14,17 @@ use embassy_time::{Duration, Timer};
 
 use log::info;
 
-use rs_matter::data_model::networks::unix::UnixNetifs;
-use rs_matter::data_model::networks::wireless::NoopWirelessNetCtl;
-use rs_matter::data_model::objects::{EmptyHandler, EpClMatcher};
-use rs_matter::data_model::sdm::net_comm::NetworkType;
-use rs_matter::test_device::TEST_DEV_DET;
 use rs_matter_stack::matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
+use rs_matter_stack::matter::data_model::networks::unix::UnixNetifs;
+use rs_matter_stack::matter::data_model::networks::wireless::NoopWirelessNetCtl;
 use rs_matter_stack::matter::data_model::objects::{Async, Dataver, Endpoint, Node};
+use rs_matter_stack::matter::data_model::objects::{EmptyHandler, EpClMatcher};
 use rs_matter_stack::matter::data_model::on_off;
 use rs_matter_stack::matter::data_model::on_off::{ClusterHandler as _, OnOffHandler};
+use rs_matter_stack::matter::data_model::sdm::net_comm::NetworkType;
 use rs_matter_stack::matter::data_model::system_model::desc::{ClusterHandler as _, DescHandler};
 use rs_matter_stack::matter::error::Error;
+use rs_matter_stack::matter::test_device::TEST_DEV_DET;
 use rs_matter_stack::matter::test_device::{TEST_DEV_ATT, TEST_DEV_COMM};
 use rs_matter_stack::matter::transport::network::btp::BuiltinGattPeripheral;
 use rs_matter_stack::matter::utils::init::InitMaybeUninit;

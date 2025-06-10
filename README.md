@@ -70,17 +70,21 @@ use env_logger::Target;
 use log::info;
 
 use rs_matter_stack::eth::EthMatterStack;
-use rs_matter_stack::matter::data_model::cluster_basic_information::BasicInfoConfig;
-use rs_matter_stack::matter::data_model::cluster_on_off;
 use rs_matter_stack::matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter_stack::matter::data_model::objects::{Dataver, Endpoint, HandlerCompat, Node};
-use rs_matter_stack::matter::data_model::system_model::descriptor;
+use rs_matter_stack::matter::data_model::networks::unix::UnixNetifs;
+use rs_matter_stack::matter::data_model::objects::{Async, Dataver, Endpoint, Node};
+use rs_matter_stack::matter::data_model::objects::{EmptyHandler, EpClMatcher};
+use rs_matter_stack::matter::data_model::on_off;
+use rs_matter_stack::matter::data_model::on_off::ClusterHandler as _;
+use rs_matter_stack::matter::data_model::system_model::desc;
+use rs_matter_stack::matter::data_model::system_model::desc::ClusterHandler as _;
 use rs_matter_stack::matter::error::Error;
+use rs_matter_stack::matter::test_device::TEST_DEV_DET;
+use rs_matter_stack::matter::test_device::{TEST_DEV_ATT, TEST_DEV_COMM};
 use rs_matter_stack::matter::utils::init::InitMaybeUninit;
 use rs_matter_stack::matter::utils::select::Coalesce;
-use rs_matter_stack::netif::UnixNetif;
+use rs_matter_stack::matter::{clusters, devices};
 use rs_matter_stack::persist::DirKvBlobStore;
-use rs_matter_stack::test_device::{TEST_BASIC_COMM_DATA, TEST_DEV_ATT, TEST_PID, TEST_VID};
 
 use static_cell::StaticCell;
 
@@ -98,46 +102,30 @@ fn main() -> Result<(), Error> {
     let stack = MATTER_STACK
         .uninit()
         .init_with(EthMatterStack::init_default(
-            &BasicInfoConfig {
-                vid: TEST_VID,
-                pid: TEST_PID,
-                hw_ver: 2,
-                hw_ver_str: "2",
-                sw_ver: 1,
-                sw_ver_str: "1",
-                serial_no: "aabbccdd",
-                device_name: "MyLight",
-                product_name: "ACME Light",
-                vendor_name: "ACME",
-                sai: None,
-                sii: None,
-            },
-            TEST_BASIC_COMM_DATA,
+            &TEST_DEV_DET,
+            TEST_DEV_COMM,
             &TEST_DEV_ATT,
         ));
 
     // Our "light" on-off cluster.
     // Can be anything implementing `rs_matter::data_model::AsyncHandler`
-    let on_off = cluster_on_off::OnOffCluster::new(Dataver::new_rand(stack.matter().rand()));
+    let on_off = on_off::OnOffHandler::new(Dataver::new_rand(stack.matter().rand()));
 
     // Chain our endpoint clusters with the
     // (root) Endpoint 0 system clusters in the final handler
-    let handler = stack
-        .root_handler()
-        // Our on-off cluster, on Endpoint 1
+    let handler = EmptyHandler
         .chain(
-            LIGHT_ENDPOINT_ID,
-            cluster_on_off::ID,
-            HandlerCompat(&on_off),
+            EpClMatcher::new(
+                Some(LIGHT_ENDPOINT_ID),
+                Some(on_off::OnOffHandler::CLUSTER.id),
+            ),
+            Async(on_off::HandlerAdaptor(&on_off)),
         )
         // Each Endpoint needs a Descriptor cluster too
         // Just use the one that `rs-matter` provides out of the box
         .chain(
-            LIGHT_ENDPOINT_ID,
-            descriptor::ID,
-            HandlerCompat(descriptor::DescriptorCluster::new(Dataver::new_rand(
-                stack.matter().rand(),
-            ))),
+            EpClMatcher::new(Some(LIGHT_ENDPOINT_ID), Some(desc::DescHandler::CLUSTER.id)),
+            Async(desc::DescHandler::new(Dataver::new_rand(stack.matter().rand())).adapt()),
         );
 
     // Run the Matter stack with our handler
@@ -145,16 +133,16 @@ fn main() -> Result<(), Error> {
     // not being very intelligent w.r.t. stack usage in async functions
     let store = stack.create_shared_store(DirKvBlobStore::new_default());
     let mut matter = pin!(stack.run_preex(
-        // Will try to find a default network interface
-        UnixNetif::default(),
         // The Matter stack needs UDP sockets to communicate with other Matter devices
         edge_nal_std::Stack::new(),
+        // Will try to find a default network interface
+        UnixNetifs,
         // Will persist in `<tmp-dir>/rs-matter`
         &store,
         // Our `AsyncHandler` + `AsyncMetadata` impl
         (NODE, handler),
-        // No user future to run
-        core::future::pending(),
+        // No user task future to run
+        (),
     ));
 
     // Just for demoing purposes:
@@ -194,11 +182,11 @@ const LIGHT_ENDPOINT_ID: u16 = 1;
 const NODE: Node = Node {
     id: 0,
     endpoints: &[
-        EthMatterStack::<()>::root_metadata(),
+        EthMatterStack::<()>::root_endpoint(),
         Endpoint {
             id: LIGHT_ENDPOINT_ID,
-            device_types: &[DEV_TYPE_ON_OFF_LIGHT],
-            clusters: &[descriptor::CLUSTER, cluster_on_off::CLUSTER],
+            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
+            clusters: clusters!(desc::DescHandler::CLUSTER, on_off::OnOffHandler::CLUSTER),
         },
     ],
 };
