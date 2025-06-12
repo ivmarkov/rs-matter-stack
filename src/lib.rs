@@ -367,6 +367,7 @@ where
             ipv4: Ipv4Addr,
             mac: [u8; 8],
             operational: bool,
+            netif_index: u32,
         }
 
         impl Netif {
@@ -376,6 +377,7 @@ where
                     ipv4: Ipv4Addr::UNSPECIFIED,
                     mac: [0; 8],
                     operational: false,
+                    netif_index: 0,
                 }
             }
         }
@@ -399,6 +401,7 @@ where
                         .copied()
                         .unwrap_or(Ipv4Addr::UNSPECIFIED);
                     netif.mac = *ni.hw_addr;
+                    netif.netif_index = ni.netif_index;
                 }
 
                 Ok(())
@@ -460,7 +463,7 @@ where
                     &cur_netif.mac,
                     cur_netif.ipv4,
                     cur_netif.ipv6,
-                    0,
+                    cur_netif.netif_index,
                 ));
 
                 if let Some((comm_recv, comm_send)) = comm.as_mut() {
