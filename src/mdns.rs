@@ -17,7 +17,7 @@
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::signal::Signal;
 
-use rs_matter::data_model::basic_info::BasicInfoConfig;
+use rs_matter::dm::clusters::basic_info::BasicInfoConfig;
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::mdns::{Mdns, Service, ServiceMode};
 use rs_matter::utils::cell::RefCell;

@@ -3,7 +3,7 @@ use core::fmt::Display;
 use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 
-use rs_matter::data_model::networks::wireless::{WirelessNetwork, WirelessNetworks};
+use rs_matter::dm::networks::wireless::{WirelessNetwork, WirelessNetworks};
 use rs_matter::error::Error;
 use rs_matter::utils::storage::pooled::{BufferAccess, PooledBuffer, PooledBuffers};
 use rs_matter::utils::sync::{IfMutex, IfMutexGuard};

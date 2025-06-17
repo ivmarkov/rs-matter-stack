@@ -14,18 +14,17 @@ use embassy_time::{Duration, Timer};
 
 use log::info;
 
-use rs_matter_stack::matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter_stack::matter::data_model::networks::unix::UnixNetifs;
-use rs_matter_stack::matter::data_model::networks::wireless::NoopWirelessNetCtl;
-use rs_matter_stack::matter::data_model::objects::{Async, Dataver, Endpoint, Node};
-use rs_matter_stack::matter::data_model::objects::{EmptyHandler, EpClMatcher};
-use rs_matter_stack::matter::data_model::on_off;
-use rs_matter_stack::matter::data_model::on_off::{ClusterHandler as _, OnOffHandler};
-use rs_matter_stack::matter::data_model::sdm::net_comm::NetworkType;
-use rs_matter_stack::matter::data_model::system_model::desc::{ClusterHandler as _, DescHandler};
+use rs_matter_stack::matter::dm::clusters::desc::{ClusterHandler as _, DescHandler};
+use rs_matter_stack::matter::dm::clusters::net_comm::NetworkType;
+use rs_matter_stack::matter::dm::clusters::on_off;
+use rs_matter_stack::matter::dm::clusters::on_off::{ClusterHandler as _, OnOffHandler};
+use rs_matter_stack::matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter_stack::matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
+use rs_matter_stack::matter::dm::networks::unix::UnixNetifs;
+use rs_matter_stack::matter::dm::networks::wireless::NoopWirelessNetCtl;
+use rs_matter_stack::matter::dm::{Async, Dataver, Endpoint, Node};
+use rs_matter_stack::matter::dm::{EmptyHandler, EpClMatcher};
 use rs_matter_stack::matter::error::Error;
-use rs_matter_stack::matter::test_device::TEST_DEV_DET;
-use rs_matter_stack::matter::test_device::{TEST_DEV_ATT, TEST_DEV_COMM};
 use rs_matter_stack::matter::transport::network::btp::BuiltinGattPeripheral;
 use rs_matter_stack::matter::utils::init::InitMaybeUninit;
 use rs_matter_stack::matter::utils::select::Coalesce;
@@ -55,7 +54,7 @@ fn main() -> Result<(), Error> {
         ));
 
     // Our "light" on-off cluster.
-    // Can be anything implementing `rs_matter::data_model::AsyncHandler`
+    // Can be anything implementing `rs_matter::dm::AsyncHandler`
     let on_off = on_off::OnOffHandler::new(Dataver::new_rand(stack.matter().rand()));
 
     // Chain our endpoint clusters with the
