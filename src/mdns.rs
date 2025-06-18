@@ -168,7 +168,7 @@ where
     where
         T: FnMut(&edge_mdns::host::Service) -> Result<(), Error>,
     {
-        self.visit_services(|(_, service)| {
+        self.visit_services(|_, service| {
             let service = edge_mdns::host::Service {
                 name: service.name,
                 service: service.service,
