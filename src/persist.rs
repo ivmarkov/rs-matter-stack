@@ -404,7 +404,7 @@ mod file {
         }
 
         /// Load a BLOB with the specified key from the directory.
-        fn load<'a>(&self, key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
+        pub fn load<'a>(&self, key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
             let path = self.key_path(key);
 
             match std::fs::File::open(path) {
