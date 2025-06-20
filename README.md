@@ -1,4 +1,4 @@
-# (WIP) Easily configure and run [rs-matter](https://github.com/project-chip/rs-matter)
+# ![alt text](https://avatars.githubusercontent.com/u/61027988?s=48&v=4 "rs-matter-stack") Easily configure and run [rs-matter](https://github.com/project-chip/rs-matter)
 
 [![CI](https://github.com/ivmarkov/rs-matter-stack/actions/workflows/ci.yml/badge.svg)](https://github.com/ivmarkov/rs-matter-stack/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/rs-matter-stack.svg)](https://crates.io/crates/rs-matter-stack)
