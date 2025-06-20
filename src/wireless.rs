@@ -5,13 +5,13 @@ use edge_nal::UdpBind;
 use embassy_futures::select::{select, select3};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use rs_matter::data_model::networks::wireless::{
+use rs_matter::dm::clusters::gen_diag::NetifDiag;
+use rs_matter::dm::clusters::net_comm::NetCtl;
+use rs_matter::dm::clusters::wifi_diag::WirelessDiag;
+use rs_matter::dm::networks::wireless::{
     NetCtlState, WirelessMgr, WirelessNetwork, WirelessNetworks, MAX_CREDS_SIZE,
 };
-use rs_matter::data_model::networks::NetChangeNotif;
-use rs_matter::data_model::sdm::gen_diag::NetifDiag;
-use rs_matter::data_model::sdm::net_comm::NetCtl;
-use rs_matter::data_model::sdm::wifi_diag::WirelessDiag;
+use rs_matter::dm::networks::NetChangeNotif;
 use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::transport::network::btp::{Btp, BtpContext, GattPeripheral};

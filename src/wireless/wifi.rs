@@ -5,17 +5,17 @@ use edge_nal::UdpBind;
 use embassy_futures::select::{select, select3, select4};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use rs_matter::data_model::networks::wireless::{
+use rs_matter::dm::clusters::gen_comm::CommPolicy;
+use rs_matter::dm::clusters::gen_diag::GenDiag;
+use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus, NetworkType};
+use rs_matter::dm::clusters::wifi_diag::WifiDiag;
+use rs_matter::dm::endpoints::{self, with_sys, with_wifi, SysHandler, WifiHandler};
+use rs_matter::dm::networks::wireless::{
     self, NetCtlWithStatusImpl, NoopWirelessNetCtl, WirelessMgr,
 };
-use rs_matter::data_model::networks::NetChangeNotif;
-use rs_matter::data_model::objects::{AsyncMetadata, Endpoint};
-use rs_matter::data_model::root_endpoint::{self, with_sys, with_wifi, SysHandler, WifiHandler};
-use rs_matter::data_model::sdm::gen_comm::CommPolicy;
-use rs_matter::data_model::sdm::gen_diag::GenDiag;
-use rs_matter::data_model::sdm::net_comm::{NetCtl, NetCtlStatus, NetworkType};
-use rs_matter::data_model::sdm::wifi_diag::WifiDiag;
-use rs_matter::data_model::{objects::AsyncHandler, sdm::gen_diag::NetifDiag};
+use rs_matter::dm::networks::NetChangeNotif;
+use rs_matter::dm::{clusters::gen_diag::NetifDiag, AsyncHandler};
+use rs_matter::dm::{AsyncMetadata, Endpoint};
 use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::transport::network::btp::GattPeripheral;
@@ -199,7 +199,7 @@ where
     /// Return a metadata for the root (Endpoint 0) of the Matter Node
     /// configured for BLE+Wifi network.
     pub const fn root_endpoint() -> Endpoint<'static> {
-        root_endpoint::root_endpoint(NetworkType::Wifi)
+        endpoints::root_endpoint(NetworkType::Wifi)
     }
 
     /// Return a handler for the root (Endpoint 0) of the Matter Node

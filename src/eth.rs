@@ -4,12 +4,12 @@ use edge_nal::UdpBind;
 
 use embassy_futures::select::{select, select3};
 
-use rs_matter::data_model::networks::NetChangeNotif;
-use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Endpoint};
-use rs_matter::data_model::root_endpoint::{self, with_eth, with_sys, EthHandler, SysHandler};
-use rs_matter::data_model::sdm::gen_comm::CommPolicy;
-use rs_matter::data_model::sdm::gen_diag::{GenDiag, NetifDiag};
-use rs_matter::data_model::sdm::net_comm::NetworkType;
+use rs_matter::dm::clusters::gen_comm::CommPolicy;
+use rs_matter::dm::clusters::gen_diag::{GenDiag, NetifDiag};
+use rs_matter::dm::clusters::net_comm::NetworkType;
+use rs_matter::dm::endpoints::{self, with_eth, with_sys, EthHandler, SysHandler};
+use rs_matter::dm::networks::NetChangeNotif;
+use rs_matter::dm::{AsyncHandler, AsyncMetadata, Endpoint};
 use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::transport::network::NoNetwork;
@@ -140,7 +140,7 @@ where
     /// Return a metadata for the root (Endpoint 0) of the Matter Node
     /// configured for Ethernet network.
     pub const fn root_endpoint() -> Endpoint<'static> {
-        root_endpoint::root_endpoint(NetworkType::Ethernet)
+        endpoints::root_endpoint(NetworkType::Ethernet)
     }
 
     /// Return a handler for the root (Endpoint 0) of the Matter Node
