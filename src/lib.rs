@@ -542,11 +542,7 @@ where
         S: KvBlobStore,
         C: NetworkPersist,
     {
-        if false {
-            persist.run().await
-        } else {
-            core::future::pending().await
-        }
+        persist.run().await
     }
 
     async fn run_responder<H>(&self, handler: H) -> Result<(), Error>

@@ -100,7 +100,7 @@ where
 
         let persist = self.create_persist(store);
 
-        // TODO persist.load().await?;
+        persist.load().await?;
 
         self.matter().reset_transport()?;
 
@@ -134,7 +134,7 @@ where
 
         let persist = self.create_persist(store);
 
-        // TODO persist.load().await?;
+        persist.load().await?;
 
         self.matter().reset_transport()?;
 
