@@ -217,7 +217,9 @@ where
     {
         info!("Matter Stack memory: {}B", core::mem::size_of_val(self));
 
-        // TODO persist.load().await?;
+        let persist = self.create_persist(store);
+
+        persist.load().await?;
 
         self.matter().reset_transport()?;
 
@@ -226,8 +228,6 @@ where
                 .enable_basic_commissioning(DiscoveryCapabilities::IP, 0)
                 .await?; // TODO
         }
-
-        let persist = self.create_persist(store);
 
         let mut net_task = pin!(self.run_ethernet(ethernet, handler, user));
         let mut persist_task = pin!(self.run_psm(&persist));

@@ -202,7 +202,9 @@ impl NetworkPersist for () {
         false
     }
 
-    async fn wait_state_changed(&self) {}
+    async fn wait_state_changed(&self) {
+        core::future::pending().await
+    }
 }
 
 /// The first key available for the vendor-specific data.
