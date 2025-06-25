@@ -322,10 +322,14 @@ impl KvBlobStore for DummyKvBlobStore {
         Ok(())
     }
 
-    async fn store<F>(&mut self, _key: u16, _buf: &mut [u8], _cb: F) -> Result<(), Error>
+    async fn store<F>(&mut self, _key: u16, buf: &mut [u8], cb: F) -> Result<(), Error>
     where
         F: FnOnce(&mut [u8]) -> Result<usize, Error>,
     {
+        // Need to call the callback even if we are not storing for real, so as
+        // the callback can mark its internal state as "stored".
+        cb(buf)?;
+
         Ok(())
     }
 
