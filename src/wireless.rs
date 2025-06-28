@@ -1,7 +1,5 @@
 use core::pin::pin;
 
-use edge_nal::UdpBind;
-
 use embassy_futures::select::{select, select3};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
@@ -21,6 +19,7 @@ use rs_matter::utils::init::{init, zeroed, Init};
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::sync::{blocking, IfMutex};
 
+use crate::nal::NetStack;
 use crate::network::{Embedding, Network};
 use crate::private::Sealed;
 use crate::MatterStack;
@@ -157,15 +156,15 @@ where
         Ok(())
     }
 
-    async fn run_net_coex<U, N, C, G>(
+    async fn run_net_coex<S, N, C, G>(
         &'static self,
-        udp: U,
+        net_stack: S,
         netif: N,
         net_ctl: C,
         mut gatt: G,
     ) -> Result<(), Error>
     where
-        U: UdpBind,
+        S: NetStack,
         N: NetifDiag + NetChangeNotif,
         C: NetCtl + WirelessDiag + NetChangeNotif,
         G: GattPeripheral,
@@ -200,7 +199,7 @@ where
 
                 let mut mgr = WirelessMgr::new(&self.network.networks, &net_ctl, &mut buf);
 
-                let mut net_task = pin!(self.run_btp_coex(&udp, &netif, &mut gatt));
+                let mut net_task = pin!(self.run_btp_coex(&net_stack, &netif, &mut gatt));
                 let mut mgr_task = pin!(mgr.run());
 
                 select(&mut net_task, &mut mgr_task).coalesce().await?;
@@ -214,7 +213,7 @@ where
                 self.matter().disable_commissioning()?;
 
                 let mut net_task = pin!(self.run_oper_net(
-                    &udp,
+                    &net_stack,
                     &netif,
                     core::future::pending(),
                     Option::<(NoNetwork, NoNetwork)>::None
@@ -226,14 +225,14 @@ where
         }
     }
 
-    async fn run_btp_coex<U, N, P>(
+    async fn run_btp_coex<S, N, P>(
         &'static self,
-        mut udp: U,
+        net_stack: S,
         netif: N,
         peripheral: P,
     ) -> Result<(), Error>
     where
-        U: UdpBind,
+        S: NetStack,
         N: NetifDiag + NetChangeNotif,
         P: GattPeripheral,
     {
@@ -249,7 +248,7 @@ where
 
         // TODO: Run till commissioning is complete
         let mut net_task = pin!(self.run_oper_net(
-            &mut udp,
+            &net_stack,
             &netif,
             core::future::pending(),
             Some((&btp, &btp))
@@ -298,19 +297,19 @@ where
 ///
 /// This utility can only be used with hardware that implements wireless coexist mode
 /// (i.e. the Thread/Wifi interface as well as the BLE GATT peripheral are available at the same time).
-pub struct PreexistingWireless<U, N, C, G> {
-    pub(crate) udp: U,
+pub struct PreexistingWireless<S, N, C, G> {
+    pub(crate) net_stack: S,
     pub(crate) netif: N,
     pub(crate) net_ctl: C,
     pub(crate) gatt: G,
 }
 
-impl<U, N, C, G> PreexistingWireless<U, N, C, G> {
-    /// Create a new `PreexistingWireless` instance with the given UDP stack,
+impl<S, N, C, G> PreexistingWireless<S, N, C, G> {
+    /// Create a new `PreexistingWireless` instance with the given network stack,
     /// network interface, network controller and GATT peripheral.
-    pub const fn new(udp: U, netif: N, net_ctl: C, gatt: G) -> Self {
+    pub const fn new(net_stack: S, netif: N, net_ctl: C, gatt: G) -> Self {
         Self {
-            udp,
+            net_stack,
             netif,
             net_ctl,
             gatt,

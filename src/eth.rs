@@ -1,7 +1,5 @@
 use core::pin::pin;
 
-use edge_nal::UdpBind;
-
 use embassy_futures::select::{select, select3};
 
 use rs_matter::dm::clusters::gen_comm::CommPolicy;
@@ -16,6 +14,7 @@ use rs_matter::transport::network::NoNetwork;
 use rs_matter::utils::init::{init, Init};
 use rs_matter::utils::select::Coalesce;
 
+use crate::nal::NetStack;
 use crate::network::{Embedding, Network};
 use crate::persist::{KvBlobStore, SharedKvBlobStore};
 use crate::private::Sealed;
@@ -63,12 +62,12 @@ where
 pub type EthMatterStack<'a, E = ()> = MatterStack<'a, Eth<E>>;
 
 /// A trait representing a task that needs access to the operational Ethernet interface
-/// (Netif and UDP stack) to perform its work.
+/// (Network stack and Netif) to perform its work.
 pub trait EthernetTask {
-    /// Run the task with the given network interface and UDP stack
-    async fn run<U, N>(&mut self, udp: U, netif: N) -> Result<(), Error>
+    /// Run the task with the given network stack and network interface
+    async fn run<S, N>(&mut self, net_stack: S, netif: N) -> Result<(), Error>
     where
-        U: UdpBind,
+        S: NetStack,
         N: NetifDiag + NetChangeNotif;
 }
 
@@ -76,12 +75,12 @@ impl<T> EthernetTask for &mut T
 where
     T: EthernetTask,
 {
-    async fn run<U, N>(&mut self, udp: U, netif: N) -> Result<(), Error>
+    async fn run<S, N>(&mut self, net_stack: S, netif: N) -> Result<(), Error>
     where
-        U: UdpBind,
+        S: NetStack,
         N: NetifDiag + NetChangeNotif,
     {
-        (*self).run(udp, netif).await
+        (*self).run(net_stack, netif).await
     }
 }
 
@@ -107,28 +106,28 @@ where
 
 /// A utility type for running an ethernet task with a pre-existing ethernet interface
 /// rather than bringing up / tearing down the ethernet interface for the task.
-pub struct PreexistingEthernet<U, N> {
-    udp: U,
+pub struct PreexistingEthernet<S, N> {
+    stack: S,
     netif: N,
 }
 
-impl<N, U> PreexistingEthernet<U, N> {
+impl<S, N> PreexistingEthernet<S, N> {
     /// Create a new `PreexistingEthernet` instance with the given network interface and UDP stack.
-    pub const fn new(udp: U, netif: N) -> Self {
-        Self { udp, netif }
+    pub const fn new(stack: S, netif: N) -> Self {
+        Self { stack, netif }
     }
 }
 
-impl<U, N> Ethernet for PreexistingEthernet<U, N>
+impl<S, N> Ethernet for PreexistingEthernet<S, N>
 where
-    U: UdpBind,
+    S: NetStack,
     N: NetifDiag + NetChangeNotif,
 {
     async fn run<T>(&mut self, mut task: T) -> Result<(), Error>
     where
         T: EthernetTask,
     {
-        task.run(&mut self.udp, &self.netif).await
+        task.run(&self.stack, &self.netif).await
     }
 }
 
@@ -172,27 +171,32 @@ where
     ///
     /// Parameters:
     /// - `netif` - a user-provided `Netif` implementation for the Ethernet network
-    /// - `udp` - a user-provided `UdpBind` implementation
+    /// - `net_stack` - a user-provided network stack implementation
     /// - `persist` - a user-provided `Persist` implementation
     /// - `handler` - a user-provided DM handler implementation
     /// - `user` - a user-provided future that will be polled only when the netif interface is up
     pub async fn run_preex<U, N, S, H, X>(
         &self,
-        udp: U,
+        net_stack: U,
         netif: N,
         store: &SharedKvBlobStore<'_, S>,
         handler: H,
         user: X,
     ) -> Result<(), Error>
     where
+        U: NetStack,
         N: NetifDiag + NetChangeNotif,
-        U: UdpBind,
         S: KvBlobStore,
         H: AsyncHandler + AsyncMetadata,
         X: UserTask,
     {
-        self.run(PreexistingEthernet::new(udp, netif), store, handler, user)
-            .await
+        self.run(
+            PreexistingEthernet::new(net_stack, netif),
+            store,
+            handler,
+            user,
+        )
+        .await
     }
 
     /// Run the Matter stack for an Ethernet network.
@@ -257,15 +261,15 @@ where
     H: AsyncMetadata + AsyncHandler,
     X: UserTask,
 {
-    async fn run<U, C>(&mut self, udp: U, netif: C) -> Result<(), Error>
+    async fn run<S, C>(&mut self, net_stack: S, netif: C) -> Result<(), Error>
     where
-        U: UdpBind,
+        S: NetStack,
         C: NetifDiag + NetChangeNotif,
     {
         info!("Ethernet driver started");
 
         let mut net_task = pin!(self.0.run_oper_net(
-            &udp,
+            &net_stack,
             &netif,
             core::future::pending(),
             Option::<(NoNetwork, NoNetwork)>::None,
@@ -274,7 +278,7 @@ where
         let handler = self.0.root_handler(&(), &true, &netif, &self.1);
         let mut handler_task = pin!(self.0.run_handler((&self.1, handler)));
 
-        let mut user_task = pin!(self.2.run(&udp, &netif));
+        let mut user_task = pin!(self.2.run(&net_stack, &netif));
 
         select3(&mut net_task, &mut handler_task, &mut user_task)
             .coalesce()

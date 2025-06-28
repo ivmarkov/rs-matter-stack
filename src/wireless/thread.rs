@@ -1,7 +1,5 @@
 use core::pin::pin;
 
-use edge_nal::UdpBind;
-
 use embassy_futures::select::{select, select3, select4};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
@@ -22,6 +20,7 @@ use rs_matter::transport::network::btp::GattPeripheral;
 use rs_matter::transport::network::NoNetwork;
 use rs_matter::utils::select::Coalesce;
 
+use crate::nal::NetStack;
 use crate::network::Embedding;
 use crate::persist::{KvBlobStore, SharedKvBlobStore};
 use crate::wireless::{GattTask, MatterStackWirelessTask};
@@ -40,8 +39,8 @@ where
     /// Run the Matter stack for an already pre-existing wireless network where the BLE and the operational network can co-exist.
     ///
     /// Parameters:
+    /// - `net_stack` - a user-provided `NetStack` implementation
     /// - `netif` - a user-provided `Netif` implementation
-    /// - `udp` - a user-provided `UdpBind` implementation
     /// - `controller` - a user-provided `Controller` implementation
     /// - `gatt` - a user-provided `GattPeripheral` implementation
     /// - `store` - a `SharedKvBlobStore` implementation wrapping a user-provided `KvBlobStore`
@@ -50,7 +49,7 @@ where
     #[allow(clippy::too_many_arguments)]
     pub async fn run_preex<U, N, C, G, S, H, X>(
         &'static self,
-        udp: U,
+        net_stack: U,
         netif: N,
         net_ctl: C,
         gatt: G,
@@ -59,7 +58,7 @@ where
         user: X,
     ) -> Result<(), Error>
     where
-        U: UdpBind,
+        U: NetStack,
         N: NetifDiag + NetChangeNotif,
         C: NetCtl + ThreadDiag + NetChangeNotif,
         G: GattPeripheral,
@@ -68,7 +67,7 @@ where
         X: UserTask,
     {
         self.run_coex(
-            PreexistingWireless::new(udp, netif, net_ctl, gatt),
+            PreexistingWireless::new(net_stack, netif, net_ctl, gatt),
             store,
             handler,
             user,
@@ -229,12 +228,12 @@ where
 }
 
 /// A trait representing a task that needs access to the operational wireless interface (Wifi or Thread)
-/// (Netif, UDP stack and Wireless controller) to perform its work.
+/// (network stack, Netif and Wireless controller) to perform its work.
 pub trait ThreadTask {
     /// Run the task with the given network interface, UDP stack and wireless controller
-    async fn run<U, N, C>(&mut self, udp: U, netif: N, net_ctl: C) -> Result<(), Error>
+    async fn run<S, N, C>(&mut self, net_stack: S, netif: N, net_ctl: C) -> Result<(), Error>
     where
-        U: UdpBind,
+        S: NetStack,
         N: NetifDiag + NetChangeNotif,
         C: NetCtl + ThreadDiag + NetChangeNotif;
 }
@@ -243,13 +242,13 @@ impl<T> ThreadTask for &mut T
 where
     T: ThreadTask,
 {
-    async fn run<U, N, C>(&mut self, udp: U, netif: N, net_ctl: C) -> Result<(), Error>
+    async fn run<S, N, C>(&mut self, net_stack: S, netif: N, net_ctl: C) -> Result<(), Error>
     where
-        U: UdpBind,
+        S: NetStack,
         N: NetifDiag + NetChangeNotif,
         C: NetCtl + ThreadDiag + NetChangeNotif,
     {
-        T::run(*self, udp, netif, net_ctl).await
+        T::run(*self, net_stack, netif, net_ctl).await
     }
 }
 
@@ -279,16 +278,16 @@ where
 ///
 /// Typically, tasks performing the Matter concurrent commissioning workflow will implement this trait.
 pub trait ThreadCoexTask {
-    /// Run the task with the given network interface, UDP stack and wireless controller
-    async fn run<U, N, C, G>(
+    /// Run the task with the given network stack, network interface and wireless controller
+    async fn run<S, N, C, G>(
         &mut self,
-        udp: U,
+        net_stack: S,
         netif: N,
         net_task: C,
         gatt: G,
     ) -> Result<(), Error>
     where
-        U: UdpBind,
+        S: NetStack,
         N: NetifDiag + NetChangeNotif,
         C: NetCtl + ThreadDiag + NetChangeNotif,
         G: GattPeripheral;
@@ -298,14 +297,20 @@ impl<T> ThreadCoexTask for &mut T
 where
     T: ThreadCoexTask,
 {
-    async fn run<U, N, C, G>(&mut self, udp: U, netif: N, net_ctl: C, gatt: G) -> Result<(), Error>
+    async fn run<S, N, C, G>(
+        &mut self,
+        net_stack: S,
+        netif: N,
+        net_ctl: C,
+        gatt: G,
+    ) -> Result<(), Error>
     where
-        U: UdpBind,
+        S: NetStack,
         N: NetifDiag + NetChangeNotif,
         C: NetCtl + ThreadDiag + NetChangeNotif,
         G: GattPeripheral,
     {
-        T::run(*self, udp, netif, net_ctl, gatt).await
+        T::run(*self, net_stack, netif, net_ctl, gatt).await
     }
 }
 
@@ -334,9 +339,9 @@ where
     }
 }
 
-impl<U, N, C, P> Thread for PreexistingWireless<U, N, C, P>
+impl<S, N, C, P> Thread for PreexistingWireless<S, N, C, P>
 where
-    U: UdpBind,
+    S: NetStack,
     N: NetifDiag + NetChangeNotif,
     C: NetCtl + ThreadDiag + NetChangeNotif,
 {
@@ -344,13 +349,13 @@ where
     where
         T: ThreadTask,
     {
-        task.run(&mut self.udp, &self.netif, &self.net_ctl).await
+        task.run(&self.net_stack, &self.netif, &self.net_ctl).await
     }
 }
 
-impl<U, N, C, P> ThreadCoex for PreexistingWireless<U, N, C, P>
+impl<S, N, C, P> ThreadCoex for PreexistingWireless<S, N, C, P>
 where
-    U: UdpBind,
+    S: NetStack,
     N: NetifDiag + NetChangeNotif,
     C: NetCtl + ThreadDiag + NetChangeNotif,
     P: GattPeripheral,
@@ -359,7 +364,7 @@ where
     where
         T: ThreadCoexTask,
     {
-        task.run(&mut self.udp, &self.netif, &self.net_ctl, &mut self.gatt)
+        task.run(&self.net_stack, &self.netif, &self.net_ctl, &mut self.gatt)
             .await
     }
 }
@@ -395,9 +400,9 @@ where
     H: AsyncMetadata + AsyncHandler,
     X: UserTask,
 {
-    async fn run<U, N, C>(&mut self, udp: U, netif: N, net_ctl: C) -> Result<(), Error>
+    async fn run<S, N, C>(&mut self, net_stack: S, netif: N, net_ctl: C) -> Result<(), Error>
     where
-        U: UdpBind,
+        S: NetStack,
         N: NetifDiag + NetChangeNotif,
         C: NetCtl + ThreadDiag + NetChangeNotif,
     {
@@ -410,7 +415,7 @@ where
         let stack = &mut self.0;
 
         let mut net_task = pin!(stack.run_oper_net(
-            &udp,
+            &net_stack,
             &netif,
             core::future::pending(),
             Option::<(NoNetwork, NoNetwork)>::None
@@ -424,7 +429,7 @@ where
             .root_handler(&(), &netif, &net_ctl_s, &false, &self.1);
         let mut handler_task = pin!(self.0.run_handler((&self.1, handler)));
 
-        let mut user_task = pin!(self.2.run(&udp, &netif));
+        let mut user_task = pin!(self.2.run(&net_stack, &netif));
 
         select4(
             &mut net_task,
@@ -444,9 +449,15 @@ where
     H: AsyncMetadata + AsyncHandler,
     X: UserTask,
 {
-    async fn run<U, N, C, G>(&mut self, udp: U, netif: N, net_ctl: C, gatt: G) -> Result<(), Error>
+    async fn run<S, N, C, G>(
+        &mut self,
+        net_stack: S,
+        netif: N,
+        net_ctl: C,
+        gatt: G,
+    ) -> Result<(), Error>
     where
-        U: UdpBind,
+        S: NetStack,
         N: NetifDiag + NetChangeNotif,
         C: NetCtl + ThreadDiag + NetChangeNotif,
         G: GattPeripheral,
@@ -455,14 +466,14 @@ where
 
         let stack = &mut self.0;
 
-        let mut net_task = pin!(stack.run_net_coex(&udp, &netif, &net_ctl, gatt));
+        let mut net_task = pin!(stack.run_net_coex(&net_stack, &netif, &net_ctl, gatt));
 
         let net_ctl_s = NetCtlWithStatusImpl::new(&self.0.network.net_state, &net_ctl);
 
         let handler = self.0.root_handler(&(), &netif, &net_ctl_s, &true, &self.1);
         let mut handler_task = pin!(self.0.run_handler((&self.1, handler)));
 
-        let mut user_task = pin!(self.2.run(&udp, &netif));
+        let mut user_task = pin!(self.2.run(&net_stack, &netif));
 
         select3(&mut net_task, &mut handler_task, &mut user_task)
             .coalesce()

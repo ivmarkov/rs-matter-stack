@@ -14,7 +14,6 @@ use core::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use core::pin::pin;
 
 use edge_nal::{UdpBind, UdpSplit};
-
 use embassy_futures::select::{select4, Either4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
@@ -36,6 +35,7 @@ use rs_matter::utils::rand::Rand;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{BasicCommData, Matter, MATTER_PORT};
 
+use crate::nal::NetStack;
 use crate::network::Network;
 use crate::persist::SharedKvBlobStore;
 
@@ -341,6 +341,7 @@ where
     /// the main UDP transport and the mDNS service when the netif goes up/down or changes its IP addresses.
     ///
     /// Parameters:
+    /// - `net_stack` - a user-provided network stack that implements `UdpBind`, `UdpConnect`, `TcpBind`, `TcpConnect`, and `Dns`
     /// - `netif` - a user-provided `Netif` implementation
     /// - `until` - the method will return once this future becomes ready
     /// - `comm` - a tuple of additional and optional `NetworkReceive` and `NetworkSend` transport implementations
@@ -348,13 +349,13 @@ where
     ///   i.e. when using concurrent commissisoning)
     async fn run_oper_net<U, I, X, R, S>(
         &self,
-        udp: U,
+        net_stack: U,
         netif: I,
         until: X,
         mut comm: Option<(R, S)>,
     ) -> Result<(), Error>
     where
-        U: UdpBind,
+        U: NetStack,
         I: NetifDiag + NetChangeNotif,
         X: Future<Output = Result<(), Error>>,
         R: NetworkReceive,
@@ -446,7 +447,9 @@ where
             let result = if cur_netif.operational {
                 info!("Netif up: {:?}", cur_netif);
 
-                let mut socket = udp
+                let udp_bind = unwrap!(net_stack.udp_bind());
+
+                let mut socket = udp_bind
                     .bind(SocketAddr::V6(SocketAddrV6::new(
                         Ipv6Addr::UNSPECIFIED,
                         MATTER_PORT,
@@ -459,7 +462,7 @@ where
                 let (recv, send) = socket.split();
 
                 let mut mdns_task = pin!(self.run_builtin_mdns(
-                    &udp,
+                    &udp_bind,
                     &cur_netif.mac,
                     cur_netif.ipv4,
                     cur_netif.ipv6,
@@ -682,17 +685,17 @@ where
 }
 
 /// A trait representing a user task that needs access to the operational network interface
-/// (Netif and UDP stack) to perform its work.
+/// (Netif and net stack) to perform its work.
 ///
 /// Note that the task would be started only when `rs-matter`
 /// brings up the operational interface (eth, wifi or thread)
 /// and if the interface goes down, the user task would be stopped.
 /// Upon re-connection, the task would be started again.
 pub trait UserTask {
-    /// Run the task with the given network interface and UDP stack
-    async fn run<U, N>(&mut self, udp: U, netif: N) -> Result<(), Error>
+    /// Run the task with the given network stack and network interface
+    async fn run<S, N>(&mut self, net_stack: S, netif: N) -> Result<(), Error>
     where
-        U: UdpBind,
+        S: NetStack,
         N: NetifDiag + NetChangeNotif;
 }
 
@@ -700,19 +703,19 @@ impl<T> UserTask for &mut T
 where
     T: UserTask,
 {
-    async fn run<U, N>(&mut self, udp: U, netif: N) -> Result<(), Error>
+    async fn run<S, N>(&mut self, net_stack: S, netif: N) -> Result<(), Error>
     where
-        U: UdpBind,
+        S: NetStack,
         N: NetifDiag + NetChangeNotif,
     {
-        (*self).run(udp, netif).await
+        (*self).run(net_stack, netif).await
     }
 }
 
 impl UserTask for () {
-    async fn run<U, N>(&mut self, _udp: U, _netif: N) -> Result<(), Error>
+    async fn run<S, N>(&mut self, _net_stack: S, _netif: N) -> Result<(), Error>
     where
-        U: UdpBind,
+        S: NetStack,
         N: NetifDiag + NetChangeNotif,
     {
         core::future::pending::<()>().await;
