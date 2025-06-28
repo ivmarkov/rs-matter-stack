@@ -1,4 +1,3 @@
-use edge_nal::io::Error;
 /// Re-export the `edge-nal` crate
 pub use edge_nal::*;
 
@@ -8,8 +7,6 @@ pub mod std {
     pub use edge_nal_std::*;
 
     impl super::NetStack for Stack {
-        type Error = std::io::Error;
-
         type UdpBind<'a>
             = &'a Stack
         where
@@ -55,28 +52,216 @@ pub mod std {
     }
 }
 
+/// Noop implementations for the `edge-nal` traits.
+/// All of these panic when called
+// TODO: Move to `edge-nal`
+pub mod noop {
+    use core::{
+        convert::Infallible,
+        net::{Ipv4Addr, SocketAddr},
+    };
+
+    use edge_nal::io::{ErrorType, Read, Write};
+    use edge_nal::{
+        Close, MulticastV4, MulticastV6, Readable, TcpAccept, TcpBind, TcpConnect, TcpShutdown,
+        TcpSplit, UdpBind, UdpConnect, UdpReceive, UdpSend, UdpSplit,
+    };
+
+    /// A type that implements all `edge-nal` traits but does not support any operation
+    /// and panics when any method is called.
+    pub struct NoopNet;
+
+    impl UdpBind for NoopNet {
+        type Error = Infallible;
+
+        type Socket<'a>
+            = NoopNet
+        where
+            Self: 'a;
+
+        async fn bind(&self, _local: SocketAddr) -> Result<Self::Socket<'_>, Self::Error> {
+            panic!("UDP bind not supported")
+        }
+    }
+
+    impl UdpConnect for NoopNet {
+        type Error = Infallible;
+
+        type Socket<'a>
+            = NoopNet
+        where
+            Self: 'a;
+
+        async fn connect(
+            &self,
+            _local: SocketAddr,
+            _remote: SocketAddr,
+        ) -> Result<Self::Socket<'_>, Self::Error> {
+            panic!("UDP connect not supported")
+        }
+    }
+
+    impl TcpBind for NoopNet {
+        type Error = Infallible;
+
+        type Accept<'a>
+            = NoopNet
+        where
+            Self: 'a;
+
+        async fn bind(&self, _local: SocketAddr) -> Result<Self::Accept<'_>, Self::Error> {
+            panic!("TCP bind not supported")
+        }
+    }
+
+    impl TcpAccept for NoopNet {
+        type Error = Infallible;
+
+        type Socket<'a>
+            = NoopNet
+        where
+            Self: 'a;
+
+        async fn accept(&self) -> Result<(SocketAddr, Self::Socket<'_>), Self::Error> {
+            panic!("TCP accept not supported")
+        }
+    }
+
+    impl TcpConnect for NoopNet {
+        type Error = Infallible;
+
+        type Socket<'a>
+            = NoopNet
+        where
+            Self: 'a;
+
+        async fn connect(&self, _remote: SocketAddr) -> Result<Self::Socket<'_>, Self::Error> {
+            panic!("TCP connect not supported")
+        }
+    }
+
+    impl ErrorType for NoopNet {
+        type Error = Infallible;
+    }
+
+    impl Readable for NoopNet {
+        async fn readable(&mut self) -> Result<(), Self::Error> {
+            panic!("Readable not supported")
+        }
+    }
+
+    impl UdpSend for NoopNet {
+        async fn send(&mut self, _remote: SocketAddr, _data: &[u8]) -> Result<(), Self::Error> {
+            panic!("UDP send not supported")
+        }
+    }
+
+    impl UdpReceive for NoopNet {
+        async fn receive(
+            &mut self,
+            _buffer: &mut [u8],
+        ) -> Result<(usize, SocketAddr), Self::Error> {
+            panic!("UDP receive not supported")
+        }
+    }
+
+    impl UdpSplit for NoopNet {
+        type Receive<'a> = Self;
+        type Send<'a> = Self;
+
+        fn split(&mut self) -> (Self::Send<'_>, Self::Receive<'_>) {
+            panic!("UDP split not supported")
+        }
+    }
+
+    impl MulticastV4 for NoopNet {
+        async fn join_v4(
+            &mut self,
+            _multicast_addr: Ipv4Addr,
+            _interface: Ipv4Addr,
+        ) -> Result<(), Self::Error> {
+            panic!("Multicast join not supported")
+        }
+
+        async fn leave_v4(
+            &mut self,
+            _multicast_addr: Ipv4Addr,
+            _interface: Ipv4Addr,
+        ) -> Result<(), Self::Error> {
+            panic!("Multicast leave not supported")
+        }
+    }
+
+    impl MulticastV6 for NoopNet {
+        async fn join_v6(
+            &mut self,
+            _multicast_addr: core::net::Ipv6Addr,
+            _interface: u32,
+        ) -> Result<(), Self::Error> {
+            panic!("Multicast join not supported")
+        }
+
+        async fn leave_v6(
+            &mut self,
+            _multicast_addr: core::net::Ipv6Addr,
+            _interface: u32,
+        ) -> Result<(), Self::Error> {
+            panic!("Multicast leave not supported")
+        }
+    }
+
+    impl Read for NoopNet {
+        async fn read(&mut self, _buf: &mut [u8]) -> Result<usize, Self::Error> {
+            panic!("Read not supported")
+        }
+    }
+
+    impl Write for NoopNet {
+        async fn write(&mut self, _buf: &[u8]) -> Result<usize, Self::Error> {
+            panic!("Write not supported")
+        }
+    }
+
+    impl TcpSplit for NoopNet {
+        type Read<'a> = Self;
+        type Write<'a> = Self;
+
+        fn split(&mut self) -> (Self::Write<'_>, Self::Read<'_>) {
+            panic!("TCP split not supported")
+        }
+    }
+
+    impl TcpShutdown for NoopNet {
+        async fn close(&mut self, _what: Close) -> Result<(), Self::Error> {
+            panic!("TCP shutdown not supported")
+        }
+
+        async fn abort(&mut self) -> Result<(), Self::Error> {
+            panic!("TCP abort not supported")
+        }
+    }
+}
+
 /// The network stack used by `rs-matter-stack`
 ///
 /// Depending on the platform and features enabled, the stack
 /// might or might not support certain protocols.
 pub trait NetStack {
-    type Error: Error;
-
-    type UdpBind<'a>: UdpBind<Error = Self::Error>
+    type UdpBind<'a>: UdpBind
     where
         Self: 'a;
-    type UdpConnect<'a>: UdpConnect<Error = Self::Error>
-    where
-        Self: 'a;
-
-    type TcpBind<'a>: TcpBind<Error = Self::Error>
-    where
-        Self: 'a;
-    type TcpConnect<'a>: TcpConnect<Error = Self::Error>
+    type UdpConnect<'a>: UdpConnect
     where
         Self: 'a;
 
-    type Dns<'a>: Dns<Error = Self::Error>
+    type TcpBind<'a>: TcpBind
+    where
+        Self: 'a;
+    type TcpConnect<'a>: TcpConnect
+    where
+        Self: 'a;
+
+    type Dns<'a>: Dns
     where
         Self: 'a;
 
@@ -100,8 +285,6 @@ impl<T> NetStack for &T
 where
     T: NetStack,
 {
-    type Error = T::Error;
-
     type UdpBind<'a>
         = T::UdpBind<'a>
     where
