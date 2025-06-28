@@ -56,15 +56,13 @@ pub mod std {
 /// All of these panic when called
 // TODO: Move to `edge-nal`
 pub mod noop {
-    use core::{
-        convert::Infallible,
-        net::{Ipv4Addr, SocketAddr},
-    };
+    use core::convert::Infallible;
+    use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     use edge_nal::io::{ErrorType, Read, Write};
     use edge_nal::{
-        Close, MulticastV4, MulticastV6, Readable, TcpAccept, TcpBind, TcpConnect, TcpShutdown,
-        TcpSplit, UdpBind, UdpConnect, UdpReceive, UdpSend, UdpSplit,
+        AddrType, Close, Dns, MulticastV4, MulticastV6, Readable, TcpAccept, TcpBind, TcpConnect,
+        TcpShutdown, TcpSplit, UdpBind, UdpConnect, UdpReceive, UdpSend, UdpSplit,
     };
 
     /// A type that implements all `edge-nal` traits but does not support any operation
@@ -137,6 +135,26 @@ pub mod noop {
 
         async fn connect(&self, _remote: SocketAddr) -> Result<Self::Socket<'_>, Self::Error> {
             panic!("TCP connect not supported")
+        }
+    }
+
+    impl Dns for NoopNet {
+        type Error = Infallible;
+
+        async fn get_host_by_name(
+            &self,
+            _host: &str,
+            _addr_type: AddrType,
+        ) -> Result<IpAddr, Self::Error> {
+            panic!("DNS get_host_by_name not supported")
+        }
+
+        async fn get_host_by_address(
+            &self,
+            _addr: IpAddr,
+            _result: &mut [u8],
+        ) -> Result<usize, Self::Error> {
+            panic!("DNS get_host_by_address not supported")
         }
     }
 
