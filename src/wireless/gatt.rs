@@ -46,7 +46,7 @@ where
     }
 }
 
-impl<U, N, C, P> Gatt for PreexistingWireless<U, N, C, P>
+impl<U, N, C, M, P> Gatt for PreexistingWireless<U, N, C, M, P>
 where
     P: GattPeripheral,
 {

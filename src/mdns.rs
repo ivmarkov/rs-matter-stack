@@ -1,203 +1,399 @@
-//! An alternative implementation of the `rs-matter` `Mdns` trait based on `edge-mdns`.
-//!
-//! `rs-matter` does have a built-in mDNS imlementation, and that implementation is
-//! in fact primarily maintained by the same author who maintains `edge-mdns`.
-//!
-//! However, the key difference between the two is that the `rs-matter` built-in mDNS
-//! implementation - _for now_ -_only_ responds to queries which concern the Matter
-//! protocol itself and also does not expose a query interface. This makes it unsuitable
-//! for use in cases where the same host that operates an `rs-matter` stack needs to -
-//! for whatever reasons - to host additional service types different than the ones
-//! concerning Matter, and/or issue ad-hoc mDNS queries outside the queries necessary
-//! for operating the Matter stack.
-//!
-//! Using `edge-mdns` solves this problem by providing a general-purpose mDNS which can be
-//! shared between the `rs-matter` stack and other - user-specific use cases.
+use core::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 
-use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::signal::Signal;
+use edge_nal::{UdpBind, UdpSplit};
 
-use rs_matter::dm::clusters::basic_info::BasicInfoConfig;
 use rs_matter::error::{Error, ErrorCode};
-use rs_matter::mdns::{Mdns, Service, ServiceMode};
-use rs_matter::utils::cell::RefCell;
-use rs_matter::utils::init::{init, Init};
-use rs_matter::utils::sync::blocking::Mutex;
+use rs_matter::transport::network::mdns::builtin::BuiltinMdnsResponder;
+use rs_matter::Matter;
 
-const MAX_MATTER_SERVICES: usize = 4;
-const MAX_MATTER_SERVICE_NAME_LEN: usize = 40;
+use crate::udp;
 
-/// An adaptor from `rs-matter` buffers to `edge-mdns` buffers.
-#[cfg(feature = "edge-mdns")]
-pub struct MatterBuffer<B>(B);
-
-#[cfg(feature = "edge-mdns")]
-impl<B> MatterBuffer<B> {
-    /// Create a new instance of `MatterBuffer`
-    pub const fn new(buffer: B) -> Self {
-        Self(buffer)
-    }
-}
-
-#[cfg(feature = "edge-mdns")]
-impl<B, T> edge_mdns::buf::BufferAccess<T> for MatterBuffer<B>
-where
-    B: rs_matter::utils::storage::pooled::BufferAccess<T>,
-    T: ?Sized,
-{
-    type Buffer<'a>
-        = B::Buffer<'a>
+/// A trait for running an mDNS responder.
+pub trait Mdns {
+    /// Run the mDNS responder with the given UDP binding, MAC address, IPv4 and IPv6 addresses, and interface index.
+    ///
+    /// NOTE: This trait might change once `rs-matter` starts supporting mDNS resolvers
+    async fn run<U>(
+        &mut self,
+        udp: U,
+        mac: &[u8],
+        ipv4: Ipv4Addr,
+        ipv6: Ipv6Addr,
+        interface: u32,
+    ) -> Result<(), Error>
     where
-        Self: 'a;
+        U: UdpBind;
+}
 
-    async fn get(&self) -> Option<Self::Buffer<'_>> {
-        self.0.get().await
+impl<T> Mdns for &mut T
+where
+    T: Mdns,
+{
+    async fn run<U>(
+        &mut self,
+        udp: U,
+        mac: &[u8],
+        ipv4: Ipv4Addr,
+        ipv6: Ipv6Addr,
+        interface: u32,
+    ) -> Result<(), Error>
+    where
+        U: UdpBind,
+    {
+        (*self).run(udp, mac, ipv4, ipv6, interface).await
     }
 }
 
-/// An adaptor struct that does two things:
-/// - Implements the `rs-matter` `Mdns` trait and thus can be used as an mDNS implementation
-///   for `rs-matter` with e.g. `MdnsService::Provided(&matter_services)`
-/// - Implements a publc visitor method - `visit_services` - that represents all services
-///   registered by `rs-matter` via the `Mdns` trait
-///   With this in-place, e.g. `edge-mdns` can easily respond to queries concerning `rs-matter`
-///   services by e.g. using the `HostAnswersMdnsHandler` struct and the `ServiceAnswers` adaptor.
-pub struct MatterMdnsServices<'a, M>
-where
-    M: RawMutex,
-{
-    dev_det: &'a BasicInfoConfig<'a>,
-    matter_port: u16,
-    services: Mutex<
-        M,
-        RefCell<
-            rs_matter::utils::storage::Vec<
-                (heapless::String<MAX_MATTER_SERVICE_NAME_LEN>, ServiceMode),
-                MAX_MATTER_SERVICES,
-            >,
-        >,
-    >,
-    broadcast_signal: Signal<M, ()>,
+/// A built-in mDNS responder for Matter, utilizing the `rs-matter` built-in mDNS implementation.
+pub struct BuiltinMdns<'a> {
+    matter: &'a Matter<'a>,
 }
 
-impl<'a, M> MatterMdnsServices<'a, M>
-where
-    M: RawMutex,
-{
-    /// Create a new instance of `MatterServices`
-    #[inline(always)]
-    pub const fn new(dev_det: &'a BasicInfoConfig<'a>, matter_port: u16) -> Self {
-        Self {
-            dev_det,
-            matter_port,
-            services: Mutex::new(RefCell::new(rs_matter::utils::storage::Vec::new())),
-            broadcast_signal: Signal::new(),
+impl<'a> BuiltinMdns<'a> {
+    /// Create a new instance of the built-in mDNS responder.
+    ///
+    /// # Arguments
+    /// * `matter` - A reference to the Matter instance that this responder will use.
+    pub const fn new(matter: &'a Matter<'a>) -> Self {
+        Self { matter }
+    }
+
+    /// A utility to prep and run the built-in `rs-matter` mDNS responder for Matter via the `edge-nal` UDP traits.
+    ///
+    /// Arguments:
+    /// - `matter`: A reference to the `Matter` instance.
+    /// - `udp`: An object implementing the `UdpBind` trait for binding UDP sockets.
+    /// - `mac`: The MAC address of the host, used to generate the hostname.
+    /// - `ipv4`: The IPv4 address of the host.
+    /// - `ipv6`: The IPv6 address of the host.
+    /// - `interface`: The interface index for the host, used for IPv6 multicast.
+    pub async fn run<U>(
+        &mut self,
+        udp: U,
+        mac: &[u8],
+        ipv4: Ipv4Addr,
+        ipv6: Ipv6Addr,
+        interface: u32,
+    ) -> Result<(), Error>
+    where
+        U: UdpBind,
+    {
+        use core::fmt::Write as _;
+
+        use {edge_nal::MulticastV4, edge_nal::MulticastV6};
+
+        use rs_matter::transport::network::mdns::builtin::Host;
+        use rs_matter::transport::network::mdns::{
+            MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_PORT,
+        };
+
+        let mut socket = udp
+            .bind(SocketAddr::V6(SocketAddrV6::new(
+                Ipv6Addr::UNSPECIFIED,
+                MDNS_PORT,
+                0,
+                interface,
+            )))
+            .await
+            .map_err(|_| ErrorCode::StdIoError)?;
+
+        socket
+            .join_v4(MDNS_IPV4_BROADCAST_ADDR, ipv4)
+            .await
+            .map_err(|_| ErrorCode::StdIoError)?;
+        socket
+            .join_v6(MDNS_IPV6_BROADCAST_ADDR, interface)
+            .await
+            .map_err(|_| ErrorCode::StdIoError)?;
+
+        let (recv, send) = socket.split();
+
+        let mut hostname = heapless::String::<16>::new();
+        if mac.len() == 6 {
+            write_unwrap!(
+                hostname,
+                "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+                mac[0],
+                mac[1],
+                mac[2],
+                mac[3],
+                mac[4],
+                mac[5]
+            );
+        } else if mac.len() == 8 {
+            write_unwrap!(
+                hostname,
+                "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+                mac[0],
+                mac[1],
+                mac[2],
+                mac[3],
+                mac[4],
+                mac[5],
+                mac[6],
+                mac[7]
+            );
+        } else {
+            panic!("Invalid MAC address length: should be 6 or 8 bytes");
+        }
+
+        BuiltinMdnsResponder::new(self.matter)
+            .run(
+                udp::Udp(send),
+                udp::Udp(recv),
+                &Host {
+                    id: 0,
+                    hostname: &hostname,
+                    ip: ipv4,
+                    ipv6,
+                },
+                Some(ipv4),
+                Some(interface),
+            )
+            .await?;
+
+        Ok(())
+    }
+}
+
+impl Mdns for BuiltinMdns<'_> {
+    async fn run<U>(
+        &mut self,
+        udp: U,
+        mac: &[u8],
+        ipv4: Ipv4Addr,
+        ipv6: Ipv6Addr,
+        interface: u32,
+    ) -> Result<(), Error>
+    where
+        U: UdpBind,
+    {
+        self.run(udp, mac, ipv4, ipv6, interface).await
+    }
+}
+
+/// An mDNS responder for Matter using the Avahi zbus mDNS implementation.
+#[cfg(feature = "zbus")]
+pub struct AvahiMdns<'a> {
+    matter: &'a Matter<'a>,
+    connection: &'a rs_matter::utils::zbus::Connection,
+}
+
+#[cfg(feature = "zbus")]
+impl<'a> AvahiMdns<'a> {
+    /// Create a new instance of the Avahi mDNS responder.
+    ///
+    /// # Arguments
+    /// * `matter` - A reference to the Matter instance that this responder will use.
+    pub const fn new(
+        matter: &'a Matter<'a>,
+        connection: &'a rs_matter::utils::zbus::Connection,
+    ) -> Self {
+        Self { matter, connection }
+    }
+}
+
+#[cfg(feature = "zbus")]
+impl Mdns for AvahiMdns<'_> {
+    async fn run<U>(
+        &mut self,
+        _udp: U,
+        _mac: &[u8],
+        _ipv4: Ipv4Addr,
+        _ipv6: Ipv6Addr,
+        _interface: u32,
+    ) -> Result<(), Error>
+    where
+        U: UdpBind,
+    {
+        rs_matter::transport::network::mdns::avahi::AvahiMdnsResponder::new(self.matter)
+            .run(self.connection)
+            .await
+    }
+}
+
+/// An mDNS responder for Matter using the systemd-resolved zbus mDNS implementation.
+#[cfg(feature = "zbus")]
+pub struct ResolveMdns<'a> {
+    matter: &'a Matter<'a>,
+    connection: &'a rs_matter::utils::zbus::Connection,
+}
+
+#[cfg(feature = "zbus")]
+impl<'a> ResolveMdns<'a> {
+    /// Create a new instance of the systemd-resolved mDNS responder.
+    ///
+    /// # Arguments
+    /// * `matter` - A reference to the Matter instance that this responder will use.
+    pub const fn new(
+        matter: &'a Matter<'a>,
+        connection: &'a rs_matter::utils::zbus::Connection,
+    ) -> Self {
+        Self { matter, connection }
+    }
+}
+
+#[cfg(feature = "zbus")]
+impl Mdns for ResolveMdns<'_> {
+    async fn run<U>(
+        &mut self,
+        _udp: U,
+        _mac: &[u8],
+        _ipv4: Ipv4Addr,
+        _ipv6: Ipv6Addr,
+        _interface: u32,
+    ) -> Result<(), Error>
+    where
+        U: UdpBind,
+    {
+        rs_matter::transport::network::mdns::resolve::ResolveMdnsResponder::new(self.matter)
+            .run(self.connection)
+            .await
+    }
+}
+
+/// An mDNS responder for Matter using the `zeroconf` crate.
+#[cfg(feature = "zeroconf")]
+pub struct ZeroconfMdns<'a> {
+    matter: &'a Matter<'a>,
+}
+
+#[cfg(feature = "zeroconf")]
+impl<'a> ZeroconfMdns<'a> {
+    /// Create a new instance of the `zeroconf` `mDNS responder.
+    ///
+    /// # Arguments
+    /// * `matter` - A reference to the Matter instance that this responder will use.
+    pub const fn new(matter: &'a Matter<'a>) -> Self {
+        Self { matter }
+    }
+}
+
+#[cfg(feature = "zeroconf")]
+impl Mdns for ZeroconfMdns<'_> {
+    async fn run<U>(
+        &mut self,
+        _udp: U,
+        _mac: &[u8],
+        _ipv4: Ipv4Addr,
+        _ipv6: Ipv6Addr,
+        _interface: u32,
+    ) -> Result<(), Error>
+    where
+        U: UdpBind,
+    {
+        rs_matter::transport::network::mdns::zeroconf::ZeroconfMdnsResponder::new(self.matter)
+            .run()
+            .await
+    }
+}
+
+/// An mDNS responder for Matter using the `astro-dnssd` crate.
+#[cfg(feature = "astro-dnssd")]
+pub struct AstroMdns<'a> {
+    matter: &'a Matter<'a>,
+}
+
+#[cfg(feature = "astro-dnssd")]
+impl<'a> AstroMdns<'a> {
+    /// Create a new instance of the `astro-dnssd` `mDNS responder.
+    ///
+    /// # Arguments
+    /// * `matter` - A reference to the Matter instance that this responder will use.
+    pub const fn new(matter: &'a Matter<'a>) -> Self {
+        Self { matter }
+    }
+}
+
+#[cfg(feature = "astro-dnssd")]
+impl Mdns for AstroMdns<'_> {
+    async fn run<U>(
+        &mut self,
+        _udp: U,
+        _mac: &[u8],
+        _ipv4: Ipv4Addr,
+        _ipv6: Ipv6Addr,
+        _interface: u32,
+    ) -> Result<(), Error>
+    where
+        U: UdpBind,
+    {
+        rs_matter::transport::network::mdns::astro::AstroMdnsResponder::new(self.matter)
+            .run()
+            .await
+    }
+}
+
+/// Utilities for using `edge-mdns` as an mDNS responder for `rs-matter`.
+///
+/// `rs-matter` does have a built-in mDNS imlementation, and that implementation is
+/// in fact primarily maintained by the same author who maintains `edge-mdns`.
+///
+/// However, the key difference between the two is that the `rs-matter` built-in mDNS
+/// implementation - _for now_ -_only_ responds to queries which concern the Matter
+/// protocol itself and also does not expose a query interface. This makes it unsuitable
+/// for use in cases where the same host that operates an `rs-matter` stack needs to -
+/// for whatever reasons - to host additional service types different than the ones
+/// concerning Matter, and/or issue ad-hoc mDNS queries outside the queries necessary
+/// for operating the Matter stack.
+///
+/// Using `edge-mdns` solves this problem by providing a general-purpose mDNS which can be
+/// shared between the `rs-matter` stack and other - user-specific use cases.
+#[cfg(feature = "edge-mdns")]
+pub mod edge_mdns {
+    use rs_matter::error::Error;
+    use rs_matter::Matter;
+
+    /// An adaptor from `rs-matter` buffers to `edge-mdns` buffers.
+    pub struct MatterBuffer<B>(B);
+
+    impl<B> MatterBuffer<B> {
+        /// Create a new instance of `MatterBuffer`
+        pub const fn new(buffer: B) -> Self {
+            Self(buffer)
         }
     }
 
-    /// Create an in-place initializer for `MatterServices`
-    pub fn init(dev_det: &'a BasicInfoConfig<'a>, matter_port: u16) -> impl Init<Self> {
-        init!(Self {
-            dev_det,
-            matter_port,
-            services <- Mutex::init(RefCell::init(rs_matter::utils::storage::Vec::init())),
-            broadcast_signal: Signal::new(),
-        })
-    }
-
-    fn reset(&self) {
-        self.services.lock(|services| {
-            services.borrow_mut().clear();
-
-            self.broadcast_signal.signal(());
-        });
-    }
-
-    fn add(&self, service: &str, mode: ServiceMode) -> Result<(), Error> {
-        self.services.lock(|services| {
-            let mut services = services.borrow_mut();
-
-            services.retain(|(name, _)| name != service);
-            services
-                .push((unwrap!(service.try_into()), mode))
-                .map_err(|_| ErrorCode::NoSpace)?;
-
-            self.broadcast_signal.signal(());
-
-            Ok(())
-        })
-    }
-
-    fn remove(&self, service: &str) -> Result<(), Error> {
-        self.services.lock(|services| {
-            let mut services = services.borrow_mut();
-
-            services.retain(|(name, _)| name != service);
-
-            self.broadcast_signal.signal(());
-
-            Ok(())
-        })
-    }
-
-    pub fn broadcast_signal(&self) -> &Signal<M, ()> {
-        &self.broadcast_signal
-    }
-
-    /// Visit all services registered by `rs-matter` via the `Mdns` trait.
-    pub fn visit_services<T>(&self, mut visitor: T) -> Result<(), Error>
+    impl<B, T> edge_mdns::buf::BufferAccess<T> for MatterBuffer<B>
     where
-        T: FnMut(&ServiceMode, &Service) -> Result<(), Error>,
+        B: rs_matter::utils::storage::pooled::BufferAccess<T>,
+        T: ?Sized,
     {
-        self.services.lock(|services| {
-            let services = services.borrow();
+        type Buffer<'a>
+            = B::Buffer<'a>
+        where
+            Self: 'a;
 
-            for (service, mode) in &*services {
-                mode.service(self.dev_det, self.matter_port, service, |service| {
-                    visitor(mode, service)
-                })?;
-            }
-
-            Ok(())
-        })
+        async fn get(&self) -> Option<Self::Buffer<'_>> {
+            self.0.get().await
+        }
     }
 
-    /// Visit all services registered by `rs-matter` via the `Mdns` trait as `edge_mdns::host::Service` instances.
-    #[cfg(feature = "edge-mdns")]
-    pub fn visit_emdns_services<T>(&self, mut visitor: T) -> Result<(), Error>
+    /// Visit all mDNS services registered by `rs-matter` as `edge_mdns::host::Service` instances.
+    pub fn emdns_services<T>(matter: &Matter<'_>, mut visitor: T) -> Result<(), Error>
     where
         T: FnMut(&edge_mdns::host::Service) -> Result<(), Error>,
     {
-        self.visit_services(|_, service| {
-            let service = edge_mdns::host::Service {
-                name: service.name,
-                service: service.service,
-                protocol: service.protocol,
-                port: service.port,
-                service_subtypes: service.service_subtypes,
-                txt_kvs: service.txt_kvs,
-                priority: 0,
-                weight: 0,
-            };
+        matter.mdns_services(|matter_service| {
+            rs_matter::transport::network::mdns::Service::call_with(
+                &matter_service,
+                matter.dev_det(),
+                matter.port(),
+                |service| {
+                    let service = edge_mdns::host::Service {
+                        name: service.name,
+                        service: service.service,
+                        protocol: service.protocol,
+                        port: service.port,
+                        service_subtypes: service.service_subtypes,
+                        txt_kvs: service.txt_kvs,
+                        priority: 0,
+                        weight: 0,
+                    };
 
-            visitor(&service)
+                    visitor(&service)
+                },
+            )
         })
-    }
-}
-
-impl<M> Mdns for MatterMdnsServices<'_, M>
-where
-    M: RawMutex,
-{
-    fn reset(&self) {
-        MatterMdnsServices::reset(self)
-    }
-
-    fn add(&self, service: &str, mode: ServiceMode) -> Result<(), Error> {
-        MatterMdnsServices::add(self, service, mode)
-    }
-
-    fn remove(&self, service: &str) -> Result<(), Error> {
-        MatterMdnsServices::remove(self, service)
     }
 }

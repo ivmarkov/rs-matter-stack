@@ -21,17 +21,19 @@ rs-matter = { git = "https://github.com/ivmarkov/rs-matter", branch = "next" }
 #edge-mdns = { git = "https://github.com/ivmarkov/edge-net" }
 
 [features]
-default = ["examples"]
+default = []
 log = ["dep:log", "rs-matter/log", "embedded-svc/log", "edge-mdns?/log"]
 defmt = ["dep:defmt", "rs-matter/defmt", "embedded-svc/defmt", "heapless/defmt-03", "edge-mdns?/defmt"]
+zbus = ["rs-matter/zbus"]
 zeroconf = ["os", "rs-matter/zeroconf"]
+astro-dnssd = ["os", "rs-matter/astro-dnssd"]
 rustcrypto = ["rs-matter/rustcrypto"]
 os = ["backtrace", "rs-matter/os", "rustcrypto", "embassy-time/std"]
 backtrace = ["std", "rs-matter/backtrace"]
 async-io-mini = ["std", "edge-nal-std/async-io-mini"]
 std = ["alloc", "rs-matter/std", "edge-nal-std"]
 alloc = ["embedded-svc/alloc"]
-examples = ["log", "os", "nix", "embassy-time-queue-utils/generic-queue-64"]
+examples = ["log", "os", "nix", "embassy-time-queue-utils/generic-queue-64", "zeroconf"]
 
 [dependencies]
 log = { version = "0.4", default-features = false, optional = true }

@@ -83,6 +83,7 @@ use rs_matter_stack::matter::error::Error;
 use rs_matter_stack::matter::utils::init::InitMaybeUninit;
 use rs_matter_stack::matter::utils::select::Coalesce;
 use rs_matter_stack::matter::{clusters, devices};
+use rs_matter_stack::mdns::ZeroconfMdns;
 use rs_matter_stack::persist::DirKvBlobStore;
 
 use static_cell::StaticCell;
@@ -136,6 +137,8 @@ fn main() -> Result<(), Error> {
         edge_nal_std::Stack::new(),
         // Will try to find a default network interface
         UnixNetifs,
+        // Will use the mDNS implementation based on the `zeroconf` crate
+        ZeroconfMdns::new(stack.matter()),
         // Will persist in `<tmp-dir>/rs-matter`
         &store,
         // Our `AsyncHandler` + `AsyncMetadata` impl

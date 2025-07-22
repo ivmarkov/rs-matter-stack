@@ -26,7 +26,6 @@ use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{AsyncHandler, AsyncMetadata};
 use rs_matter::error::{Error, ErrorCode};
-use rs_matter::mdns::{Mdns, MdnsService};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::transport::network::{Address, ChainedNetwork, NetworkReceive, NetworkSend};
 use rs_matter::utils::epoch::Epoch;
@@ -35,6 +34,7 @@ use rs_matter::utils::rand::Rand;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{BasicCommData, Matter, MATTER_PORT};
 
+use crate::mdns::Mdns;
 use crate::nal::NetStack;
 use crate::network::Network;
 use crate::persist::SharedKvBlobStore;
@@ -74,35 +74,6 @@ const MAX_IM_BUFFERS: usize = 10;
 const MAX_RESPONDERS: usize = 4;
 const MAX_BUSY_RESPONDERS: usize = 2;
 
-/// An enum modeling the mDNS service to be used.
-#[derive(Copy, Clone, Default)]
-pub enum MdnsType<'a> {
-    /// The mDNS service provided by the `rs-matter` crate.
-    #[default]
-    Builtin,
-    /// User-provided mDNS service.
-    Provided(&'a dyn Mdns),
-}
-
-impl<'a> MdnsType<'a> {
-    pub const fn default() -> Self {
-        Self::Builtin
-    }
-
-    pub const fn mdns_service(&self) -> MdnsService<'a> {
-        match self {
-            MdnsType::Builtin => MdnsService::Builtin,
-            MdnsType::Provided(mdns) => MdnsService::Provided(*mdns),
-        }
-    }
-}
-
-impl<'a> From<MdnsType<'a>> for MdnsService<'a> {
-    fn from(value: MdnsType<'a>) -> Self {
-        value.mdns_service()
-    }
-}
-
 /// The `MatterStack` struct is the main entry point for the Matter stack.
 ///
 /// It wraps the actual `rs-matter` Matter instance and provides a simplified API for running the stack.
@@ -116,8 +87,6 @@ where
     store_buf: PooledBuffers<1, NoopRawMutex, KvBlobBuffer>,
     #[allow(unused)]
     network: N,
-    #[allow(unused)]
-    mdns: MdnsType<'a>,
     //netif_conf: Signal<NoopRawMutex, Option<NetifConf>>,
 }
 
@@ -138,7 +107,6 @@ where
             dev_det,
             dev_comm,
             dev_att,
-            MdnsType::default(),
             rs_matter::utils::epoch::sys_epoch,
             rs_matter::utils::rand::sys_rand,
         )
@@ -151,25 +119,15 @@ where
         dev_det: &'a BasicInfoConfig,
         dev_comm: BasicCommData,
         dev_att: &'a dyn DevAttDataFetcher,
-        mdns: MdnsType<'a>,
         epoch: Epoch,
         rand: Rand,
     ) -> Self {
         Self {
-            matter: Matter::new(
-                dev_det,
-                dev_comm,
-                dev_att,
-                mdns.mdns_service(),
-                epoch,
-                rand,
-                MATTER_PORT,
-            ),
+            matter: Matter::new(dev_det, dev_comm, dev_att, epoch, rand, MATTER_PORT),
             buffers: PooledBuffers::new(0),
             subscriptions: Subscriptions::new(),
             store_buf: PooledBuffers::new(0),
             network: N::INIT,
-            mdns,
             //netif_conf: Signal::new(None),
         }
     }
@@ -186,7 +144,6 @@ where
             dev_det,
             dev_comm,
             dev_att,
-            MdnsType::default(),
             rs_matter::utils::epoch::sys_epoch,
             rs_matter::utils::rand::sys_rand,
         )
@@ -197,7 +154,6 @@ where
         dev_det: &'a BasicInfoConfig,
         dev_comm: BasicCommData,
         dev_att: &'a dyn DevAttDataFetcher,
-        mdns: MdnsType<'a>,
         epoch: Epoch,
         rand: Rand,
     ) -> impl Init<Self> {
@@ -206,7 +162,6 @@ where
                 dev_det,
                 dev_comm,
                 dev_att,
-                mdns.mdns_service(),
                 epoch,
                 rand,
                 MATTER_PORT,
@@ -215,7 +170,6 @@ where
             subscriptions <- Subscriptions::init(),
             store_buf <- PooledBuffers::init(0),
             network <- N::init(),
-            mdns,
             //netif_conf: Signal::new(None),
         })
     }
@@ -239,24 +193,6 @@ where
         S: KvBlobStore,
     {
         MatterPersist::new(store, self.matter(), self.network().persist_context())
-    }
-
-    /// A utility method to replace the initial mDNS implementation with another one.
-    ///
-    /// Useful in particular with `MdnsType::Provided()`, where the user would still like
-    /// to create the `MatterStack` instance in a const-context, as in e.g.:
-    /// `const Stack: MatterStack<'static, ...> = MatterStack::new(...);`
-    ///
-    /// The above const-creation is incompatible with `MdnsType::Provided()` which carries a
-    /// `&dyn Mdns` pointer, which cannot be initialized from within a const context with anything
-    /// else than a `const`. (At least not yet - there is an unstable nightly Rust feature for that).
-    ///
-    /// The solution is to const-construct the `MatterStack` object with `MdnsType::Disabled`, and
-    /// after that - while/if we still have exclusive, mutable access to the `MatterStack` object -
-    /// replace the `MdnsType::Disabled` initial impl with another, like `MdnsType::Provided`.
-    pub fn replace_mdns(&mut self, mdns: MdnsType<'a>) {
-        self.mdns = mdns;
-        self.matter.replace_mdns(mdns.mdns_service());
     }
 
     /// A utility method to replace the initial Device Attestation Data Fetcher with another one.
@@ -343,20 +279,23 @@ where
     /// Parameters:
     /// - `net_stack` - a user-provided network stack that implements `UdpBind`, `UdpConnect`, `TcpBind`, `TcpConnect`, and `Dns`
     /// - `netif` - a user-provided `Netif` implementation
+    /// - `mdns` - a user-provided mDNS implementation that implements `Mdns`
     /// - `until` - the method will return once this future becomes ready
     /// - `comm` - a tuple of additional and optional `NetworkReceive` and `NetworkSend` transport implementations
     ///   (useful when a second transport needs to run in parallel with the operational Matter transport,
     ///   i.e. when using concurrent commissisoning)
-    async fn run_oper_net<U, I, X, R, S>(
+    async fn run_oper_net<U, I, M, X, R, S>(
         &self,
         net_stack: U,
         netif: I,
+        mut mdns: M,
         until: X,
         mut comm: Option<(R, S)>,
     ) -> Result<(), Error>
     where
         U: NetStack,
         I: NetifDiag + NetChangeNotif,
+        M: Mdns,
         X: Future<Output = Result<(), Error>>,
         R: NetworkReceive,
         S: NetworkSend,
@@ -461,7 +400,7 @@ where
 
                 let (recv, send) = socket.split();
 
-                let mut mdns_task = pin!(self.run_builtin_mdns(
+                let mut mdns_task = pin!(mdns.run(
                     &udp_bind,
                     &cur_netif.mac,
                     cur_netif.ipv4,
@@ -566,109 +505,6 @@ where
         responder
             .run::<MAX_RESPONDERS, MAX_BUSY_RESPONDERS>()
             .await?;
-
-        Ok(())
-    }
-
-    async fn run_builtin_mdns<U>(
-        &self,
-        _udp: U,
-        _mac: &[u8],
-        _ipv4: Ipv4Addr,
-        _ipv6: Ipv6Addr,
-        _interface: u32,
-    ) -> Result<(), Error>
-    where
-        U: UdpBind,
-    {
-        if matches!(self.mdns, MdnsType::Builtin) {
-            #[cfg(not(all(
-                feature = "std",
-                any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))
-            )))]
-            {
-                use core::fmt::Write as _;
-
-                use {edge_nal::MulticastV4, edge_nal::MulticastV6};
-
-                use rs_matter::mdns::{
-                    Host, MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_PORT,
-                };
-
-                let mut socket = _udp
-                    .bind(SocketAddr::V6(SocketAddrV6::new(
-                        Ipv6Addr::UNSPECIFIED,
-                        MDNS_PORT,
-                        0,
-                        _interface,
-                    )))
-                    .await
-                    .map_err(|_| ErrorCode::StdIoError)?;
-
-                socket
-                    .join_v4(MDNS_IPV4_BROADCAST_ADDR, _ipv4)
-                    .await
-                    .map_err(|_| ErrorCode::StdIoError)?;
-                socket
-                    .join_v6(MDNS_IPV6_BROADCAST_ADDR, _interface)
-                    .await
-                    .map_err(|_| ErrorCode::StdIoError)?;
-
-                let (recv, send) = socket.split();
-
-                let mut hostname = heapless::String::<16>::new();
-                if _mac.len() == 6 {
-                    write_unwrap!(
-                        hostname,
-                        "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
-                        _mac[0],
-                        _mac[1],
-                        _mac[2],
-                        _mac[3],
-                        _mac[4],
-                        _mac[5]
-                    );
-                } else if _mac.len() == 8 {
-                    write_unwrap!(
-                        hostname,
-                        "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
-                        _mac[0],
-                        _mac[1],
-                        _mac[2],
-                        _mac[3],
-                        _mac[4],
-                        _mac[5],
-                        _mac[6],
-                        _mac[7]
-                    );
-                } else {
-                    panic!("Invalid MAC address length: should be 6 or 8 bytes");
-                }
-
-                self.matter()
-                    .run_builtin_mdns(
-                        udp::Udp(send),
-                        udp::Udp(recv),
-                        &Host {
-                            id: 0,
-                            hostname: &hostname,
-                            ip: _ipv4,
-                            ipv6: _ipv6,
-                        },
-                        Some(_ipv4),
-                        Some(_interface),
-                    )
-                    .await?;
-            }
-
-            #[cfg(all(
-                feature = "std",
-                any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))
-            ))]
-            core::future::pending::<()>().await;
-        } else {
-            core::future::pending::<()>().await;
-        }
 
         Ok(())
     }

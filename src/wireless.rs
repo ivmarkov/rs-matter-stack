@@ -19,6 +19,7 @@ use rs_matter::utils::init::{init, zeroed, Init};
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::sync::{blocking, IfMutex};
 
+use crate::mdns::Mdns;
 use crate::nal::NetStack;
 use crate::network::{Embedding, Network};
 use crate::private::Sealed;
@@ -156,17 +157,19 @@ where
         Ok(())
     }
 
-    async fn run_net_coex<S, N, C, G>(
+    async fn run_net_coex<S, N, D, C, G>(
         &'static self,
         net_stack: S,
         netif: N,
         net_ctl: C,
+        mut mdns: D,
         mut gatt: G,
     ) -> Result<(), Error>
     where
         S: NetStack,
         N: NetifDiag + NetChangeNotif,
         C: NetCtl + WirelessDiag + NetChangeNotif,
+        D: Mdns,
         G: GattPeripheral,
     {
         loop {
@@ -199,7 +202,8 @@ where
 
                 let mut mgr = WirelessMgr::new(&self.network.networks, &net_ctl, &mut buf);
 
-                let mut net_task = pin!(self.run_btp_coex(&net_stack, &netif, &mut gatt));
+                let mut net_task =
+                    pin!(self.run_btp_coex(&net_stack, &netif, &mut mdns, &mut gatt));
                 let mut mgr_task = pin!(mgr.run());
 
                 select(&mut net_task, &mut mgr_task).coalesce().await?;
@@ -215,6 +219,7 @@ where
                 let mut net_task = pin!(self.run_oper_net(
                     &net_stack,
                     &netif,
+                    &mut mdns,
                     core::future::pending(),
                     Option::<(NoNetwork, NoNetwork)>::None
                 ));
@@ -225,15 +230,17 @@ where
         }
     }
 
-    async fn run_btp_coex<S, N, P>(
+    async fn run_btp_coex<S, N, D, P>(
         &'static self,
         net_stack: S,
         netif: N,
+        mut mdns: D,
         peripheral: P,
     ) -> Result<(), Error>
     where
         S: NetStack,
         N: NetifDiag + NetChangeNotif,
+        D: Mdns,
         P: GattPeripheral,
     {
         info!("Running in concurrent commissioning mode (BLE and Wireless)");
@@ -250,6 +257,7 @@ where
         let mut net_task = pin!(self.run_oper_net(
             &net_stack,
             &netif,
+            &mut mdns,
             core::future::pending(),
             Some((&btp, &btp))
         ));
@@ -297,21 +305,23 @@ where
 ///
 /// This utility can only be used with hardware that implements wireless coexist mode
 /// (i.e. the Thread/Wifi interface as well as the BLE GATT peripheral are available at the same time).
-pub struct PreexistingWireless<S, N, C, G> {
+pub struct PreexistingWireless<S, N, C, M, G> {
     pub(crate) net_stack: S,
     pub(crate) netif: N,
     pub(crate) net_ctl: C,
+    pub(crate) mdns: M,
     pub(crate) gatt: G,
 }
 
-impl<S, N, C, G> PreexistingWireless<S, N, C, G> {
+impl<S, N, C, M, G> PreexistingWireless<S, N, C, M, G> {
     /// Create a new `PreexistingWireless` instance with the given network stack,
     /// network interface, network controller and GATT peripheral.
-    pub const fn new(net_stack: S, netif: N, net_ctl: C, gatt: G) -> Self {
+    pub const fn new(net_stack: S, netif: N, net_ctl: C, mdns: M, gatt: G) -> Self {
         Self {
             net_stack,
             netif,
             net_ctl,
+            mdns,
             gatt,
         }
     }

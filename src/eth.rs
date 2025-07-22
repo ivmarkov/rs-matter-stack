@@ -14,6 +14,7 @@ use rs_matter::transport::network::NoNetwork;
 use rs_matter::utils::init::{init, Init};
 use rs_matter::utils::select::Coalesce;
 
+use crate::mdns::Mdns;
 use crate::nal::NetStack;
 use crate::network::{Embedding, Network};
 use crate::persist::{KvBlobStore, SharedKvBlobStore};
@@ -64,23 +65,25 @@ pub type EthMatterStack<'a, E = ()> = MatterStack<'a, Eth<E>>;
 /// A trait representing a task that needs access to the operational Ethernet interface
 /// (Network stack and Netif) to perform its work.
 pub trait EthernetTask {
-    /// Run the task with the given network stack and network interface
-    async fn run<S, N>(&mut self, net_stack: S, netif: N) -> Result<(), Error>
+    /// Run the task with the given network stack, network interface and mDNS
+    async fn run<S, N, M>(&mut self, net_stack: S, netif: N, mdns: M) -> Result<(), Error>
     where
         S: NetStack,
-        N: NetifDiag + NetChangeNotif;
+        N: NetifDiag + NetChangeNotif,
+        M: Mdns;
 }
 
 impl<T> EthernetTask for &mut T
 where
     T: EthernetTask,
 {
-    async fn run<S, N>(&mut self, net_stack: S, netif: N) -> Result<(), Error>
+    async fn run<S, N, M>(&mut self, net_stack: S, netif: N, mdns: M) -> Result<(), Error>
     where
         S: NetStack,
         N: NetifDiag + NetChangeNotif,
+        M: Mdns,
     {
-        (*self).run(net_stack, netif).await
+        (*self).run(net_stack, netif, mdns).await
     }
 }
 
@@ -106,28 +109,30 @@ where
 
 /// A utility type for running an ethernet task with a pre-existing ethernet interface
 /// rather than bringing up / tearing down the ethernet interface for the task.
-pub struct PreexistingEthernet<S, N> {
+pub struct PreexistingEthernet<S, N, M> {
     stack: S,
     netif: N,
+    mdns: M,
 }
 
-impl<S, N> PreexistingEthernet<S, N> {
-    /// Create a new `PreexistingEthernet` instance with the given network interface and UDP stack.
-    pub const fn new(stack: S, netif: N) -> Self {
-        Self { stack, netif }
+impl<S, N, M> PreexistingEthernet<S, N, M> {
+    /// Create a new `PreexistingEthernet` instance with the given network interface, UDP stack and mDNS.
+    pub const fn new(stack: S, netif: N, mdns: M) -> Self {
+        Self { stack, netif, mdns }
     }
 }
 
-impl<S, N> Ethernet for PreexistingEthernet<S, N>
+impl<S, N, M> Ethernet for PreexistingEthernet<S, N, M>
 where
     S: NetStack,
     N: NetifDiag + NetChangeNotif,
+    M: Mdns,
 {
     async fn run<T>(&mut self, mut task: T) -> Result<(), Error>
     where
         T: EthernetTask,
     {
-        task.run(&self.stack, &self.netif).await
+        task.run(&self.stack, &self.netif, &mut self.mdns).await
     }
 }
 
@@ -172,13 +177,15 @@ where
     /// Parameters:
     /// - `netif` - a user-provided `Netif` implementation for the Ethernet network
     /// - `net_stack` - a user-provided network stack implementation
+    /// - `mdns` - a user-provided mDNS implementation
     /// - `persist` - a user-provided `Persist` implementation
     /// - `handler` - a user-provided DM handler implementation
     /// - `user` - a user-provided future that will be polled only when the netif interface is up
-    pub async fn run_preex<U, N, S, H, X>(
+    pub async fn run_preex<U, N, M, S, H, X>(
         &self,
         net_stack: U,
         netif: N,
+        mdns: M,
         store: &SharedKvBlobStore<'_, S>,
         handler: H,
         user: X,
@@ -186,12 +193,13 @@ where
     where
         U: NetStack,
         N: NetifDiag + NetChangeNotif,
+        M: Mdns,
         S: KvBlobStore,
         H: AsyncHandler + AsyncMetadata,
         X: UserTask,
     {
         self.run(
-            PreexistingEthernet::new(net_stack, netif),
+            PreexistingEthernet::new(net_stack, netif, mdns),
             store,
             handler,
             user,
@@ -261,16 +269,18 @@ where
     H: AsyncMetadata + AsyncHandler,
     X: UserTask,
 {
-    async fn run<S, C>(&mut self, net_stack: S, netif: C) -> Result<(), Error>
+    async fn run<S, C, M>(&mut self, net_stack: S, netif: C, mut mdns: M) -> Result<(), Error>
     where
         S: NetStack,
         C: NetifDiag + NetChangeNotif,
+        M: Mdns,
     {
         info!("Ethernet driver started");
 
         let mut net_task = pin!(self.0.run_oper_net(
             &net_stack,
             &netif,
+            &mut mdns,
             core::future::pending(),
             Option::<(NoNetwork, NoNetwork)>::None,
         ));

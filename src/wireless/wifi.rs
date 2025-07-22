@@ -20,6 +20,7 @@ use rs_matter::transport::network::btp::GattPeripheral;
 use rs_matter::transport::network::NoNetwork;
 use rs_matter::utils::select::Coalesce;
 
+use crate::mdns::Mdns;
 use crate::nal::NetStack;
 use crate::network::Embedding;
 use crate::persist::{KvBlobStore, SharedKvBlobStore};
@@ -42,16 +43,18 @@ where
     /// - `net_stack` - a user-provided `NetStack` implementation
     /// - `netif` - a user-provided `Netif` implementation
     /// - `controller` - a user-provided `Controller` implementation
+    /// - `mdns` - a user-provided `Mdns` implementation
     /// - `gatt` - a user-provided `GattPeripheral` implementation
     /// - `store` - a `SharedKvBlobStore` implementation wrapping a user-provided `KvBlobStore`
     /// - `handler` - a user-provided DM handler implementation
     /// - `user` - a user-provided future that will be polled only when the netif interface is up
     #[allow(clippy::too_many_arguments)]
-    pub async fn run_preex<U, N, C, G, S, H, X>(
+    pub async fn run_preex<U, N, C, D, G, S, H, X>(
         &'static self,
         net_stack: U,
         netif: N,
         net_ctl: C,
+        mdns: D,
         gatt: G,
         store: &SharedKvBlobStore<'_, S>,
         handler: H,
@@ -61,13 +64,14 @@ where
         U: NetStack,
         N: NetifDiag + NetChangeNotif,
         C: NetCtl + WifiDiag + NetChangeNotif,
+        D: Mdns,
         G: GattPeripheral,
         S: KvBlobStore,
         H: AsyncHandler + AsyncMetadata,
         X: UserTask,
     {
         self.run_coex(
-            PreexistingWireless::new(net_stack, netif, net_ctl, gatt),
+            PreexistingWireless::new(net_stack, netif, net_ctl, mdns, gatt),
             store,
             handler,
             user,
@@ -228,25 +232,39 @@ where
 /// A trait representing a task that needs access to the operational wireless interface (Wifi or Thread)
 /// (Netif, UDP stack and Wireless controller) to perform its work.
 pub trait WifiTask {
-    /// Run the task with the given network stack, network interface and wireless controller
-    async fn run<S, N, C>(&mut self, net_stack: S, netif: N, net_ctl: C) -> Result<(), Error>
+    /// Run the task with the given network stack, network interface, wireless controller and mDNS
+    async fn run<S, N, C, M>(
+        &mut self,
+        net_stack: S,
+        netif: N,
+        net_ctl: C,
+        mdns: M,
+    ) -> Result<(), Error>
     where
         S: NetStack,
         N: NetifDiag + NetChangeNotif,
-        C: NetCtl + WifiDiag + NetChangeNotif;
+        C: NetCtl + WifiDiag + NetChangeNotif,
+        M: Mdns;
 }
 
 impl<T> WifiTask for &mut T
 where
     T: WifiTask,
 {
-    async fn run<S, N, C>(&mut self, net_stack: S, netif: N, net_ctl: C) -> Result<(), Error>
+    async fn run<S, N, C, M>(
+        &mut self,
+        net_stack: S,
+        netif: N,
+        net_ctl: C,
+        mdns: M,
+    ) -> Result<(), Error>
     where
         S: NetStack,
         N: NetifDiag + NetChangeNotif,
         C: NetCtl + WifiDiag + NetChangeNotif,
+        M: Mdns,
     {
-        T::run(*self, net_stack, netif, net_ctl).await
+        T::run(*self, net_stack, netif, net_ctl, mdns).await
     }
 }
 
@@ -276,18 +294,20 @@ where
 ///
 /// Typically, tasks performing the Matter concurrent commissioning workflow will implement this trait.
 pub trait WifiCoexTask {
-    /// Run the task with the given network stack, network interface and wireless controller
-    async fn run<S, N, C, G>(
+    /// Run the task with the given network stack, network interface, wireless controller and mDNS
+    async fn run<S, N, C, M, G>(
         &mut self,
         net_stack: S,
         netif: N,
         net_ctl: C,
+        mdns: M,
         gatt: G,
     ) -> Result<(), Error>
     where
         S: NetStack,
         N: NetifDiag + NetChangeNotif,
         C: NetCtl + WifiDiag + NetChangeNotif,
+        M: Mdns,
         G: GattPeripheral;
 }
 
@@ -295,20 +315,22 @@ impl<T> WifiCoexTask for &mut T
 where
     T: WifiCoexTask,
 {
-    async fn run<S, N, C, G>(
+    async fn run<S, N, C, M, G>(
         &mut self,
         net_stack: S,
         netif: N,
         net_ctl: C,
+        mdns: M,
         gatt: G,
     ) -> Result<(), Error>
     where
         S: NetStack,
         N: NetifDiag + NetChangeNotif,
         C: NetCtl + WifiDiag + NetChangeNotif,
+        M: Mdns,
         G: GattPeripheral,
     {
-        T::run(*self, net_stack, netif, net_ctl, gatt).await
+        T::run(*self, net_stack, netif, net_ctl, mdns, gatt).await
     }
 }
 
@@ -337,33 +359,42 @@ where
     }
 }
 
-impl<S, N, C, P> Wifi for PreexistingWireless<S, N, C, P>
+impl<S, N, C, M, P> Wifi for PreexistingWireless<S, N, C, M, P>
 where
     S: NetStack,
     N: NetifDiag + NetChangeNotif,
     C: NetCtl + WifiDiag + NetChangeNotif,
+    M: Mdns,
 {
     async fn run<T>(&mut self, mut task: T) -> Result<(), Error>
     where
         T: WifiTask,
     {
-        task.run(&self.net_stack, &self.netif, &self.net_ctl).await
+        task.run(&self.net_stack, &self.netif, &self.net_ctl, &mut self.mdns)
+            .await
     }
 }
 
-impl<S, N, C, P> WifiCoex for PreexistingWireless<S, N, C, P>
+impl<S, N, C, M, P> WifiCoex for PreexistingWireless<S, N, C, M, P>
 where
     S: NetStack,
     N: NetifDiag + NetChangeNotif,
     C: NetCtl + WifiDiag + NetChangeNotif,
+    M: Mdns,
     P: GattPeripheral,
 {
     async fn run<T>(&mut self, mut task: T) -> Result<(), Error>
     where
         T: WifiCoexTask,
     {
-        task.run(&self.net_stack, &self.netif, &self.net_ctl, &mut self.gatt)
-            .await
+        task.run(
+            &self.net_stack,
+            &self.netif,
+            &self.net_ctl,
+            &mut self.mdns,
+            &mut self.gatt,
+        )
+        .await
     }
 }
 
@@ -398,11 +429,18 @@ where
     H: AsyncMetadata + AsyncHandler,
     X: UserTask,
 {
-    async fn run<S, N, C>(&mut self, net_stack: S, netif: N, net_ctl: C) -> Result<(), Error>
+    async fn run<S, N, C, D>(
+        &mut self,
+        net_stack: S,
+        netif: N,
+        net_ctl: C,
+        mut mdns: D,
+    ) -> Result<(), Error>
     where
         S: NetStack,
         N: NetifDiag + NetChangeNotif,
         C: NetCtl + WifiDiag + NetChangeNotif,
+        D: Mdns,
     {
         info!("Wifi driver started");
 
@@ -415,6 +453,7 @@ where
         let mut net_task = pin!(stack.run_oper_net(
             &net_stack,
             &netif,
+            &mut mdns,
             core::future::pending(),
             Option::<(NoNetwork, NoNetwork)>::None
         ));
@@ -447,24 +486,27 @@ where
     H: AsyncMetadata + AsyncHandler,
     X: UserTask,
 {
-    async fn run<S, N, C, G>(
+    async fn run<S, N, C, D, G>(
         &mut self,
         net_stack: S,
         netif: N,
         net_ctl: C,
-        gatt: G,
+        mut mdns: D,
+        mut gatt: G,
     ) -> Result<(), Error>
     where
         S: NetStack,
         N: NetifDiag + NetChangeNotif,
         C: NetCtl + WifiDiag + NetChangeNotif,
+        D: Mdns,
         G: GattPeripheral,
     {
         info!("Wifi and BLE drivers started");
 
         let stack = &mut self.0;
 
-        let mut net_task = pin!(stack.run_net_coex(&net_stack, &netif, &net_ctl, gatt));
+        let mut net_task =
+            pin!(stack.run_net_coex(&net_stack, &netif, &net_ctl, &mut mdns, &mut gatt));
 
         let net_ctl_s = NetCtlWithStatusImpl::new(&self.0.network.net_state, &net_ctl);
 

@@ -30,6 +30,7 @@ use rs_matter_stack::matter::utils::init::InitMaybeUninit;
 use rs_matter_stack::matter::utils::select::Coalesce;
 use rs_matter_stack::matter::utils::sync::blocking::raw::StdRawMutex;
 use rs_matter_stack::matter::{clusters, devices};
+use rs_matter_stack::mdns::ZeroconfMdns;
 use rs_matter_stack::persist::DirKvBlobStore;
 use rs_matter_stack::wireless::PreexistingWireless;
 use rs_matter_stack::wireless::WifiMatterStack;
@@ -78,10 +79,14 @@ fn main() -> Result<(), Error> {
     let store = stack.create_shared_store(DirKvBlobStore::new_default());
     let mut matter = pin!(stack.run(
         PreexistingWireless::new(
+            // The Matter stack needs UDP sockets to communicate with other Matter devices
             edge_nal_std::Stack::new(),
+            // Will try to find a default network interface
             UnixNetifs,
             // A dummy wireless controller that does nothing
             NoopWirelessNetCtl::new(NetworkType::Wifi),
+            // Will use the mDNS implementation based on the `zeroconf` crate
+            ZeroconfMdns::new(stack.matter()),
             BuiltinGattPeripheral::new(None),
         ),
         // Will persist in `<tmp-dir>/rs-matter`
