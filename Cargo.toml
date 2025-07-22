@@ -29,7 +29,7 @@ rustcrypto = ["rs-matter/rustcrypto"]
 os = ["backtrace", "rs-matter/os", "rustcrypto", "embassy-time/std"]
 backtrace = ["std", "rs-matter/backtrace"]
 async-io-mini = ["std", "edge-nal-std/async-io-mini"]
-std = ["alloc", "rs-matter/std", "edge-nal-std", "rs-matter/zbus", "rs-matter/futures-lite"] # Temporarily fix a miscompilation in rs-matter
+std = ["alloc", "rs-matter/std", "edge-nal-std"]
 alloc = ["embedded-svc/alloc"]
 examples = ["log", "os", "nix", "embassy-time-queue-utils/generic-queue-64"]
 
