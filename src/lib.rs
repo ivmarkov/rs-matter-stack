@@ -401,6 +401,7 @@ where
                 let (recv, send) = socket.split();
 
                 let mut mdns_task = pin!(mdns.run(
+                    self.matter(),
                     &udp_bind,
                     &cur_netif.mac,
                     cur_netif.ipv4,

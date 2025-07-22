@@ -15,6 +15,7 @@ pub trait Mdns {
     /// NOTE: This trait might change once `rs-matter` starts supporting mDNS resolvers
     async fn run<U>(
         &mut self,
+        matter: &Matter<'_>,
         udp: U,
         mac: &[u8],
         ipv4: Ipv4Addr,
@@ -31,6 +32,7 @@ where
 {
     async fn run<U>(
         &mut self,
+        matter: &Matter<'_>,
         udp: U,
         mac: &[u8],
         ipv4: Ipv4Addr,
@@ -40,24 +42,14 @@ where
     where
         U: UdpBind,
     {
-        (*self).run(udp, mac, ipv4, ipv6, interface).await
+        (*self).run(matter, udp, mac, ipv4, ipv6, interface).await
     }
 }
 
 /// A built-in mDNS responder for Matter, utilizing the `rs-matter` built-in mDNS implementation.
-pub struct BuiltinMdns<'a> {
-    matter: &'a Matter<'a>,
-}
+pub struct BuiltinMdns;
 
-impl<'a> BuiltinMdns<'a> {
-    /// Create a new instance of the built-in mDNS responder.
-    ///
-    /// # Arguments
-    /// * `matter` - A reference to the Matter instance that this responder will use.
-    pub const fn new(matter: &'a Matter<'a>) -> Self {
-        Self { matter }
-    }
-
+impl BuiltinMdns {
     /// A utility to prep and run the built-in `rs-matter` mDNS responder for Matter via the `edge-nal` UDP traits.
     ///
     /// Arguments:
@@ -69,6 +61,7 @@ impl<'a> BuiltinMdns<'a> {
     /// - `interface`: The interface index for the host, used for IPv6 multicast.
     pub async fn run<U>(
         &mut self,
+        matter: &Matter<'_>,
         udp: U,
         mac: &[u8],
         ipv4: Ipv4Addr,
@@ -137,7 +130,7 @@ impl<'a> BuiltinMdns<'a> {
             panic!("Invalid MAC address length: should be 6 or 8 bytes");
         }
 
-        BuiltinMdnsResponder::new(self.matter)
+        BuiltinMdnsResponder::new(matter)
             .run(
                 udp::Udp(send),
                 udp::Udp(recv),
@@ -156,9 +149,10 @@ impl<'a> BuiltinMdns<'a> {
     }
 }
 
-impl Mdns for BuiltinMdns<'_> {
+impl Mdns for BuiltinMdns {
     async fn run<U>(
         &mut self,
+        matter: &Matter<'_>,
         udp: U,
         mac: &[u8],
         ipv4: Ipv4Addr,
@@ -168,28 +162,21 @@ impl Mdns for BuiltinMdns<'_> {
     where
         U: UdpBind,
     {
-        self.run(udp, mac, ipv4, ipv6, interface).await
+        self.run(matter, udp, mac, ipv4, ipv6, interface).await
     }
 }
 
 /// An mDNS responder for Matter using the Avahi zbus mDNS implementation.
 #[cfg(feature = "zbus")]
 pub struct AvahiMdns<'a> {
-    matter: &'a Matter<'a>,
     connection: &'a rs_matter::utils::zbus::Connection,
 }
 
 #[cfg(feature = "zbus")]
 impl<'a> AvahiMdns<'a> {
     /// Create a new instance of the Avahi mDNS responder.
-    ///
-    /// # Arguments
-    /// * `matter` - A reference to the Matter instance that this responder will use.
-    pub const fn new(
-        matter: &'a Matter<'a>,
-        connection: &'a rs_matter::utils::zbus::Connection,
-    ) -> Self {
-        Self { matter, connection }
+    pub const fn new(connection: &'a rs_matter::utils::zbus::Connection) -> Self {
+        Self { connection }
     }
 }
 
@@ -197,6 +184,7 @@ impl<'a> AvahiMdns<'a> {
 impl Mdns for AvahiMdns<'_> {
     async fn run<U>(
         &mut self,
+        matter: &Matter<'_>,
         _udp: U,
         _mac: &[u8],
         _ipv4: Ipv4Addr,
@@ -206,7 +194,7 @@ impl Mdns for AvahiMdns<'_> {
     where
         U: UdpBind,
     {
-        rs_matter::transport::network::mdns::avahi::AvahiMdnsResponder::new(self.matter)
+        rs_matter::transport::network::mdns::avahi::AvahiMdnsResponder::new(matter)
             .run(self.connection)
             .await
     }
@@ -215,21 +203,14 @@ impl Mdns for AvahiMdns<'_> {
 /// An mDNS responder for Matter using the systemd-resolved zbus mDNS implementation.
 #[cfg(feature = "zbus")]
 pub struct ResolveMdns<'a> {
-    matter: &'a Matter<'a>,
     connection: &'a rs_matter::utils::zbus::Connection,
 }
 
 #[cfg(feature = "zbus")]
 impl<'a> ResolveMdns<'a> {
     /// Create a new instance of the systemd-resolved mDNS responder.
-    ///
-    /// # Arguments
-    /// * `matter` - A reference to the Matter instance that this responder will use.
-    pub const fn new(
-        matter: &'a Matter<'a>,
-        connection: &'a rs_matter::utils::zbus::Connection,
-    ) -> Self {
-        Self { matter, connection }
+    pub const fn new(connection: &'a rs_matter::utils::zbus::Connection) -> Self {
+        Self { connection }
     }
 }
 
@@ -237,6 +218,7 @@ impl<'a> ResolveMdns<'a> {
 impl Mdns for ResolveMdns<'_> {
     async fn run<U>(
         &mut self,
+        matter: &Matter<'_>,
         _udp: U,
         _mac: &[u8],
         _ipv4: Ipv4Addr,
@@ -246,7 +228,7 @@ impl Mdns for ResolveMdns<'_> {
     where
         U: UdpBind,
     {
-        rs_matter::transport::network::mdns::resolve::ResolveMdnsResponder::new(self.matter)
+        rs_matter::transport::network::mdns::resolve::ResolveMdnsResponder::new(matter)
             .run(self.connection)
             .await
     }
@@ -254,25 +236,13 @@ impl Mdns for ResolveMdns<'_> {
 
 /// An mDNS responder for Matter using the `zeroconf` crate.
 #[cfg(feature = "zeroconf")]
-pub struct ZeroconfMdns<'a> {
-    matter: &'a Matter<'a>,
-}
+pub struct ZeroconfMdns;
 
 #[cfg(feature = "zeroconf")]
-impl<'a> ZeroconfMdns<'a> {
-    /// Create a new instance of the `zeroconf` `mDNS responder.
-    ///
-    /// # Arguments
-    /// * `matter` - A reference to the Matter instance that this responder will use.
-    pub const fn new(matter: &'a Matter<'a>) -> Self {
-        Self { matter }
-    }
-}
-
-#[cfg(feature = "zeroconf")]
-impl Mdns for ZeroconfMdns<'_> {
+impl Mdns for ZeroconfMdns {
     async fn run<U>(
         &mut self,
+        matter: &Matter<'_>,
         _udp: U,
         _mac: &[u8],
         _ipv4: Ipv4Addr,
@@ -282,7 +252,7 @@ impl Mdns for ZeroconfMdns<'_> {
     where
         U: UdpBind,
     {
-        rs_matter::transport::network::mdns::zeroconf::ZeroconfMdnsResponder::new(self.matter)
+        rs_matter::transport::network::mdns::zeroconf::ZeroconfMdnsResponder::new(matter)
             .run()
             .await
     }
@@ -290,25 +260,13 @@ impl Mdns for ZeroconfMdns<'_> {
 
 /// An mDNS responder for Matter using the `astro-dnssd` crate.
 #[cfg(feature = "astro-dnssd")]
-pub struct AstroMdns<'a> {
-    matter: &'a Matter<'a>,
-}
+pub struct AstroMdns;
 
 #[cfg(feature = "astro-dnssd")]
-impl<'a> AstroMdns<'a> {
-    /// Create a new instance of the `astro-dnssd` `mDNS responder.
-    ///
-    /// # Arguments
-    /// * `matter` - A reference to the Matter instance that this responder will use.
-    pub const fn new(matter: &'a Matter<'a>) -> Self {
-        Self { matter }
-    }
-}
-
-#[cfg(feature = "astro-dnssd")]
-impl Mdns for AstroMdns<'_> {
+impl Mdns for AstroMdns {
     async fn run<U>(
         &mut self,
+        matter: &Matter<'_>,
         _udp: U,
         _mac: &[u8],
         _ipv4: Ipv4Addr,
@@ -318,7 +276,7 @@ impl Mdns for AstroMdns<'_> {
     where
         U: UdpBind,
     {
-        rs_matter::transport::network::mdns::astro::AstroMdnsResponder::new(self.matter)
+        rs_matter::transport::network::mdns::astro::AstroMdnsResponder::new(matter)
             .run()
             .await
     }

@@ -138,7 +138,7 @@ fn main() -> Result<(), Error> {
         // Will try to find a default network interface
         UnixNetifs,
         // Will use the mDNS implementation based on the `zeroconf` crate
-        ZeroconfMdns::new(stack.matter()),
+        ZeroconfMdns,
         // Will persist in `<tmp-dir>/rs-matter`
         &store,
         // Our `AsyncHandler` + `AsyncMetadata` impl

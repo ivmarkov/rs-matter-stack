@@ -86,7 +86,7 @@ fn main() -> Result<(), Error> {
             // A dummy wireless controller that does nothing
             NoopWirelessNetCtl::new(NetworkType::Wifi),
             // Will use the mDNS implementation based on the `zeroconf` crate
-            ZeroconfMdns::new(stack.matter()),
+            ZeroconfMdns,
             BuiltinGattPeripheral::new(None),
         ),
         // Will persist in `<tmp-dir>/rs-matter`
