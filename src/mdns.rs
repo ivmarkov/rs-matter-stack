@@ -162,7 +162,7 @@ impl Mdns for BuiltinMdns {
     where
         U: UdpBind,
     {
-        self.run(matter, udp, mac, ipv4, ipv6, interface).await
+        Self::run(self, matter, udp, mac, ipv4, ipv6, interface).await
     }
 }
 
@@ -177,6 +177,12 @@ impl<'a> AvahiMdns<'a> {
     /// Create a new instance of the Avahi mDNS responder.
     pub const fn new(connection: &'a rs_matter::utils::zbus::Connection) -> Self {
         Self { connection }
+    }
+
+    pub async fn run(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
+        rs_matter::transport::network::mdns::avahi::AvahiMdnsResponder::new(matter)
+            .run(self.connection)
+            .await
     }
 }
 
@@ -194,9 +200,7 @@ impl Mdns for AvahiMdns<'_> {
     where
         U: UdpBind,
     {
-        rs_matter::transport::network::mdns::avahi::AvahiMdnsResponder::new(matter)
-            .run(self.connection)
-            .await
+        Self::run(self, matter).await
     }
 }
 
@@ -211,6 +215,12 @@ impl<'a> ResolveMdns<'a> {
     /// Create a new instance of the systemd-resolved mDNS responder.
     pub const fn new(connection: &'a rs_matter::utils::zbus::Connection) -> Self {
         Self { connection }
+    }
+
+    pub async fn run(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
+        rs_matter::transport::network::mdns::resolve::ResolveMdnsResponder::new(matter)
+            .run(self.connection)
+            .await
     }
 }
 
@@ -228,15 +238,22 @@ impl Mdns for ResolveMdns<'_> {
     where
         U: UdpBind,
     {
-        rs_matter::transport::network::mdns::resolve::ResolveMdnsResponder::new(matter)
-            .run(self.connection)
-            .await
+        Self::run(self, matter).await
     }
 }
 
 /// An mDNS responder for Matter using the `zeroconf` crate.
 #[cfg(feature = "zeroconf")]
 pub struct ZeroconfMdns;
+
+#[cfg(feature = "zeroconf")]
+impl ZeroconfMdns {
+    pub async fn run(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
+        rs_matter::transport::network::mdns::zeroconf::ZeroconfMdnsResponder::new(matter)
+            .run()
+            .await
+    }
+}
 
 #[cfg(feature = "zeroconf")]
 impl Mdns for ZeroconfMdns {
@@ -252,15 +269,22 @@ impl Mdns for ZeroconfMdns {
     where
         U: UdpBind,
     {
-        rs_matter::transport::network::mdns::zeroconf::ZeroconfMdnsResponder::new(matter)
-            .run()
-            .await
+        Self::run(self, matter).await
     }
 }
 
 /// An mDNS responder for Matter using the `astro-dnssd` crate.
 #[cfg(feature = "astro-dnssd")]
 pub struct AstroMdns;
+
+#[cfg(feature = "astro-dnssd")]
+impl AstroMdns {
+    pub async fn run(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
+        rs_matter::transport::network::mdns::astro::AstroMdnsResponder::new(matter)
+            .run()
+            .await
+    }
+}
 
 #[cfg(feature = "astro-dnssd")]
 impl Mdns for AstroMdns {
@@ -276,9 +300,7 @@ impl Mdns for AstroMdns {
     where
         U: UdpBind,
     {
-        rs_matter::transport::network::mdns::astro::AstroMdnsResponder::new(matter)
-            .run()
-            .await
+        Self::run(self, matter).await
     }
 }
 
