@@ -25,7 +25,7 @@ use rs_matter_stack::matter::dm::networks::wireless::NoopWirelessNetCtl;
 use rs_matter_stack::matter::dm::{Async, Dataver, Endpoint, Node};
 use rs_matter_stack::matter::dm::{EmptyHandler, EpClMatcher};
 use rs_matter_stack::matter::error::Error;
-use rs_matter_stack::matter::transport::network::btp::BuiltinGattPeripheral;
+use rs_matter_stack::matter::transport::network::btp::bluer::BluerGattPeripheral;
 use rs_matter_stack::matter::utils::init::InitMaybeUninit;
 use rs_matter_stack::matter::utils::select::Coalesce;
 use rs_matter_stack::matter::utils::sync::blocking::raw::StdRawMutex;
@@ -87,7 +87,7 @@ fn main() -> Result<(), Error> {
             NoopWirelessNetCtl::new(NetworkType::Wifi),
             // Will use the mDNS implementation based on the `zeroconf` crate
             ZeroconfMdns,
-            BuiltinGattPeripheral::new(None),
+            BluerGattPeripheral::new(None),
         ),
         // Will persist in `<tmp-dir>/rs-matter`
         &store,
